@@ -1,0 +1,83 @@
+<html>
+<head>
+<title>WebSockets Demo</title>
+<meta charset = "utf-8" />
+
+<style>
+
+body {
+	font-family: 'Liberation Sans';
+	font-size: 22px;
+}
+
+</style>
+
+<script language = "javascript" type = "text/javascript">
+
+var websock = new WebSocket("ws://localhost:1976/");
+
+websock.onopen = function () {
+	console.log("Connected");
+	send_msg();
+};
+
+websock.onclose = function () {
+	console.log("Connection closed");
+	websock.close();
+};
+
+websock.onerror = function () {
+	console.log("Error");
+};
+
+websock.onmessage = function (m) {
+	var msg = JSON.parse(m.data);
+	console.log(m.data);
+	document.getElementById("host").innerHTML = msg.host;
+	document.getElementById("uptime").innerHTML = msg.uptime;
+	document.getElementById("rxb").innerHTML = msg.rx;
+	document.getElementById("txb").innerHTML = msg.tx;
+};
+
+function send_msg () {
+	websock.send("Hello");
+};
+
+window.onbeforeunload = function() {
+	websock.close();
+};
+
+</script>
+</head>
+
+<body>
+
+<center>
+	<big>WebSockets Demo</big>
+	<p />
+	<big><b><span id = "host"></span></b></big>
+</center>
+
+<br /><br />
+
+<center>
+<table>
+<tbody>
+	<tr>
+		<td align = "right"><b>Uptime : </b></td>
+		<td align = "left"><span id = "uptime"></span></td>
+	</tr>
+	<tr>
+		<td align = "right"><b>RX bytes : </b></td>
+		<td align = "left"><span id = "rxb"></span></td>
+	</tr>
+	<tr>
+		<td align = "right"><b>TX bytes : </b></td>
+		<td align = "left"><span id = "txb"></span></td>
+	</tr>
+</tbody>
+</table>
+</center>
+
+</body>
+</html>
