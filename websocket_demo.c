@@ -1,5 +1,5 @@
 /*
- * websockets_demo.c
+ * websocket_demo.c
  *
  * WebSockets are defined here: http://tools.ietf.org/html/rfc6455
  *
