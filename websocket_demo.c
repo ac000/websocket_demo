@@ -73,7 +73,7 @@ static ssize_t do_response(int fd)
 	len = snprintf(tbuf, sizeof(tbuf), "{ ");
 
 	fp = fopen("/etc/hostname", "r");
-	fscanf(fp, "%s", buf);
+	fscanf(fp, "%4095s", buf);
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"host\": \"%s\", ",
 			buf);
 	fclose(fp);
