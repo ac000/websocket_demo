@@ -5,7 +5,7 @@ LDFLAGS=-lrt -Wl,-z,now -pie
 LIBS=`pkg-config --libs glib-2.0`
 INCS=`pkg-config --cflags glib-2.0`
 
-websocket_demo: websocket_demo.c
+websocket_demo: websocket_demo.c websocket.h
 	$(CC) $(CFLAGS) $(CFLAGS_E) $(LDFLAGS) -o $@ ${@}.c ${INCS} ${LIBS}
 
 clean:

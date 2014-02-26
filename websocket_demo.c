@@ -30,6 +30,8 @@
 
 #include <glib.h>
 
+#include "websocket.h"
+
 #define SERVER_IP		"0.0.0.0"
 #define SERVER_PORT		1976
 
@@ -37,40 +39,11 @@
 #define MAX_EVENTS		10
 #define BUF_SIZE		4096
 
-#define SHORT_HDR_LEN		2
-#define MKEY_LEN		4
-#define PAYLEN_LEN		125
-#define PAYLEN_LEN16		126
-#define PAYLEN_LEN64		127
-
-#define WS_KEY			"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
 struct client_state {
 	int fd;			/* accept fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
 };
 static struct client_state clients[MAX_CLIENTS];
-
-/*
- * Structure idea from
- * http://www.altdevblogaday.com/2012/01/23/writing-your-own-websocket-server/
- *
- * It takes advantage of the fact that the websocket frame header will always
- * be at least 16bits. These 16bits are mapped into the two bytes within the
- * structure.
- *
- * The base frame protocol is described here:
- * http://tools.ietf.org/html/rfc6455#section-5.2
- */
-struct websocket_header {
-	uint16_t opcode:4;
-	uint16_t rsv3:1;
-	uint16_t rsv2:1;
-	uint16_t rsv1:1;
-	uint16_t fin:1;
-	uint16_t pay_len:7;
-	uint16_t masked:1;
-};
 
 static int epollfd;
 static struct epoll_event ev;
