@@ -1,9 +1,10 @@
 This is a simple demonstration of WebSockets in C. It simply consists of a
 server and a HTML page.
 
-After it gets a connection, every two seconds it will send the hostname,
-uptime and rx & tx bytes of the system running the server (can be the
-same as the client).
+After it gets a connection, every two seconds (can be adjusted by
+changing the number sent in send_msg() in the HTML file) it will
+send the hostname, uptime and rx & tx bytes of the system running
+the server (can be the same as the client).
 
 Build the server (make), you may want to change the NET_IF #define
 for your system first. Run it (non-root), then load the HTML page

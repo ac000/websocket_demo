@@ -41,6 +41,8 @@
 
 struct client_state {
 	int fd;			/* accept fd */
+	int update_freq;	/* How often to get updates (in seconds) */
+	int time_rem;		/* Seconds left before update */
 	char msg[BUF_SIZE + 1];	/* Data from client */
 };
 static struct client_state clients[MAX_CLIENTS];
@@ -129,10 +131,15 @@ static void sh_do_response(int sig, siginfo_t *si, void *uc)
 
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (clients[i].fd != -1) {
-			ssize_t err = do_response(clients[i].fd);
-			if (err == -1) {
-				close(clients[i].fd);
-				clients[i].fd = -1;
+			clients[i].time_rem--;
+			if (clients[i].time_rem == 0) {
+				ssize_t err = do_response(clients[i].fd);
+				if (err == -1) {
+					close(clients[i].fd);
+					clients[i].fd = -1;
+					continue;
+				}
+				clients[i].time_rem = clients[i].update_freq;
 			}
 		}
 	}
@@ -247,6 +254,12 @@ static size_t read_client_data(int fd, struct client_state *client)
 		if (processed == -1)
 			break;
 		printf("Client data -:\n\n%s\n", client->msg);
+		client->update_freq = atoi(client->msg);
+		if (client->update_freq <= 0)
+			client->update_freq = 5;
+		client->time_rem = client->update_freq;
+		printf("Setting client update frequency to %d seconds\n",
+				client->update_freq);
 	} while (processed < bytes_read);
 
 	return processed;
@@ -269,6 +282,7 @@ static void handle_fd(int fd)
 				printf("Closing connection on %d\n", fd);
 				close(fd);
 				clients[i].fd = -1;
+				clients[i].update_freq = -1;
 				return;
 			}
 			do_response(fd);
@@ -297,7 +311,7 @@ static void handle_fd(int fd)
 }
 
 /*
- * Create a timer to send the information every 2 seconds.
+ * Create a timer (every second) to check for clients that need updates.
  */
 static void init_timer(void)
 {
@@ -316,7 +330,7 @@ static void init_timer(void)
 	sev.sigev_value.sival_ptr = &timerid;
 	timer_create(CLOCK_MONOTONIC, &sev, &timerid);
 
-	its.it_value.tv_sec = 2;
+	its.it_value.tv_sec = 1;
 	its.it_value.tv_nsec = 0;
 	its.it_interval.tv_sec = its.it_value.tv_sec;
 	its.it_interval.tv_nsec = its.it_value.tv_nsec;
