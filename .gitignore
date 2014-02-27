@@ -1,2 +1,5 @@
 *.swp
 websocket_demo
+tools/decode_frame
+tools/encode_frame
+tools/ws_hdr.bin

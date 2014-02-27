@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #define SHORT_HDR_LEN		2
+#define MAX_HDR_LEN		14
 #define MKEY_LEN		4
 #define PAYLEN_LEN		125
 #define PAYLEN_LEN16		126
