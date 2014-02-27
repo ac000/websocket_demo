@@ -17,8 +17,10 @@ body {
 var websock = new WebSocket("ws://localhost:1976/");
 
 websock.onopen = function () {
+	var freq = document.getElementById("spin");
+
 	console.log("Connected");
-	send_msg();
+	send_msg(freq.value);
 };
 
 websock.onclose = function () {
@@ -39,8 +41,21 @@ websock.onmessage = function (m) {
 	document.getElementById("txb").innerHTML = msg.tx;
 };
 
-function send_msg () {
-	websock.send("2");
+function send_msg (freq) {
+	websock.send(freq);
+};
+
+function spinner (direction) {
+	var freq = document.getElementById("spin");
+
+	if (direction == "inc")
+		freq.value++;
+	else if (direction == "dec" && freq.value > 1)
+		freq.value--;
+	else
+		return;
+
+	send_msg(freq.value);
 };
 
 window.onbeforeunload = function() {
@@ -77,6 +92,16 @@ window.onbeforeunload = function() {
 	</tr>
 </tbody>
 </table>
+</center>
+
+<p />
+
+<center>
+<small>Set update frequency <small>(seconds)</small></small>
+<p />
+<input type = "text" id = "spin" size = "2" value = "2" min = "1" readonly />
+<button type = "button" onclick = "spinner('inc');">&#11014;</button>
+<button type = "button" onclick = "spinner('dec');">&#11015;</button>
 </center>
 
 </body>
