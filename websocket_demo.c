@@ -225,7 +225,7 @@ static ssize_t decode_frame(char *dest, const char *src)
 		moffset = sizeof(uint64_t) + SHORT_HDR_LEN;
 		plen = *(uint64_t *)(src + SHORT_HDR_LEN);
 	}
-	printf("* len        : %ld\n", plen);
+	printf("* len        : %lu\n", plen);
 
 	/* Decode the payload data */
 	memcpy(key, src + moffset, MKEY_LEN);
