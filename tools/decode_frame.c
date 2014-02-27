@@ -38,7 +38,8 @@ static size_t decode_frame_header(const char *src)
 	printf("\tRSV1           : %d\n", wh->rsv1);
 	printf("\tRSV2           : %d\n", wh->rsv2);
 	printf("\tRSV3           : %d\n", wh->rsv3);
-	printf("\tOpcode         : 0x%02x\n", wh->opcode);
+	printf("\tOpcode         : 0x%02x (%s)\n", wh->opcode,
+			websocket_opcodes[wh->opcode]);
 	printf("\tMasked         : %d\n", wh->masked);
 
 	if (wh->pay_len <= PAYLEN_LEN) {

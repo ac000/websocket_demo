@@ -45,4 +45,22 @@ struct websocket_header {
         uint16_t masked:1;
 };
 
+const char *websocket_opcodes[16] = {
+	"Continuation Frame",
+	"Text Frame",
+	"Binary Frame",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED",
+	"Connection Close",
+	"Ping",
+	"Pong",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED",
+	"RESERVED" };
+
 #endif /* _WEBSOCKET_H_ */

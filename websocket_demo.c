@@ -209,7 +209,8 @@ static ssize_t decode_frame(char *dest, const char *src)
 	printf("* RSV1       : %d\n", wh->rsv1);
 	printf("* RSV2       : %d\n", wh->rsv2);
 	printf("* RSV3       : %d\n", wh->rsv3);
-	printf("* opcode     : 0x%02x\n", wh->opcode);
+	printf("* opcode     : 0x%02x (%s)\n", wh->opcode,
+			websocket_opcodes[wh->opcode]);
 
 	/* Did we get a connection close request? */
 	if (wh->opcode == 0x08)
