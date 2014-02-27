@@ -273,7 +273,7 @@ static void handle_fd(int fd)
 	char buf[BUF_SIZE + 1];
 	char key[64];
 
-	printf("Got connection on %d\n", fd);
+	printf("Got request on %d\n", fd);
 
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (clients[i].fd == fd) {
