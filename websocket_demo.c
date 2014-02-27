@@ -197,9 +197,9 @@ static void get_header(char *dest, const char *header, const char *data)
 
 static ssize_t decode_frame(char *dest, const char *src)
 {
-	int i;
 	size_t moffset;
 	size_t processed;
+	uint64_t i;
 	uint64_t plen;
 	unsigned char key[MKEY_LEN];
 	struct websocket_header *wh;
