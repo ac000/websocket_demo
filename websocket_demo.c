@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <limits.h>
 #include <unistd.h>
+#include <sys/timerfd.h>
 #include <time.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -41,8 +42,7 @@
 
 struct client_state {
 	int fd;			/* accept fd */
-	int update_freq;	/* How often to get updates (in seconds) */
-	int time_rem;		/* Seconds left before update */
+	int tfd;		/* timer fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
 };
 static struct client_state clients[MAX_CLIENTS];
@@ -123,26 +123,27 @@ static ssize_t do_response(int fd)
 }
 
 /*
- * This is likely not async-signal safe
+ * Creates and/or adjusts the clients update timer
  */
-static void sh_do_response(int sig, siginfo_t *si, void *uc)
+static void set_client_timer(int freq, struct client_state *client)
 {
-	int i;
+	struct itimerspec its;
 
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		if (clients[i].fd != -1) {
-			clients[i].time_rem--;
-			if (clients[i].time_rem == 0) {
-				ssize_t err = do_response(clients[i].fd);
-				if (err == -1) {
-					close(clients[i].fd);
-					clients[i].fd = -1;
-					continue;
-				}
-				clients[i].time_rem = clients[i].update_freq;
-			}
-		}
+	its.it_value.tv_sec = freq;
+	its.it_value.tv_nsec = 0;
+	its.it_interval.tv_sec = its.it_value.tv_sec;
+	its.it_interval.tv_nsec = its.it_value.tv_nsec;
+
+	if (client->tfd == -1) {
+		int fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+		ev.events = EPOLLIN | EPOLLET;
+		ev.data.fd = fd;
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev);
+
+		client->tfd = fd;
 	}
+
+	timerfd_settime(client->tfd, 0, &its, NULL);
 }
 
 /*
@@ -250,46 +251,64 @@ static size_t read_client_data(int fd, struct client_state *client)
 		return -1;
 	printf("Received data from client (%ld bytes)\n", bytes_read);
 	do {
+		int freq;
+
 		memset(client->msg, 0, sizeof(client->msg));
 		processed += decode_frame(client->msg, buf + processed);
 		if (processed == -1)
 			break;
 		printf("Client data -:\n\n%s\n", client->msg);
-		client->update_freq = atoi(client->msg);
-		if (client->update_freq <= 0)
-			client->update_freq = 5;
-		client->time_rem = client->update_freq;
+		freq = atoi(client->msg);
+		set_client_timer(freq, client);
 		printf("Setting client update frequency to %d seconds\n",
-				client->update_freq);
+				freq);
 	} while (processed < bytes_read);
 
 	return processed;
 }
 
+/*
+ * Handle one of three different fd's.
+ *    1a) An accept(2)'ed file descriptor for a new connection
+ *    1b) An already connected socket
+ *     2) A timer file descriptor
+ */
 static void handle_fd(int fd)
 {
 	int i;
 	ssize_t bytes_read;
-	ssize_t err;
+	ssize_t err = 0;	/* 0 allows to fall through check_conn: */
 	char buf[BUF_SIZE + 1];
 	char key[64];
 
-	printf("Got request on %d\n", fd);
+	/* Check for client timer expiration */
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		if (clients[i].tfd == fd) {
+			uint64_t tbuf;
 
+			read(fd, &tbuf, sizeof(tbuf));
+			err = do_response(clients[i].fd);
+			goto check_conn;
+		}
+	}
+
+	printf("Got request on %d\n", fd);
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (clients[i].fd == fd) {
 			err = read_client_data(fd, &clients[i]);
-			if (err == -1) {
-				printf("Closing connection on %d\n", fd);
-				close(fd);
-				clients[i].fd = -1;
-				clients[i].update_freq = -1;
-				return;
-			}
-			do_response(fd);
-			return;
+			if (err == -1)
+				break;
+
+			err = do_response(fd);
+			break;
 		}
 	}
+
+check_conn:
+	if (err == -1)
+		goto close_conn;
+	else if (err > 0)
+		return;
 
 	printf("New client\n");
 	bytes_read = read(fd, &buf, BUF_SIZE);
@@ -306,37 +325,16 @@ static void handle_fd(int fd)
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (clients[i].fd == -1) {
 			clients[i].fd = fd;
-			break;
+			return;
 		}
 	}
-}
 
-/*
- * Create a timer (every second) to check for clients that need updates.
- */
-static void init_timer(void)
-{
-	timer_t timerid;
-	struct sigevent sev;
-	struct itimerspec its;
-	struct sigaction sa;
-
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART;
-	sa.sa_sigaction = sh_do_response;
-	sigaction(SIGRTMIN, &sa, NULL);
-
-	sev.sigev_notify = SIGEV_SIGNAL;
-	sev.sigev_signo = SIGRTMIN;
-	sev.sigev_value.sival_ptr = &timerid;
-	timer_create(CLOCK_MONOTONIC, &sev, &timerid);
-
-	its.it_value.tv_sec = 1;
-	its.it_value.tv_nsec = 0;
-	its.it_interval.tv_sec = its.it_value.tv_sec;
-	its.it_interval.tv_nsec = its.it_value.tv_nsec;
-
-	timer_settime(timerid, 0, &its, NULL);
+close_conn:
+	printf("Closing connection on %d\n", fd);
+	close(fd);
+	close(clients[i].tfd);
+	clients[i].fd = -1;
+	clients[i].tfd = -1;
 }
 
 int main(int argc, char *argv[])
@@ -364,12 +362,13 @@ int main(int argc, char *argv[])
 	ev.data.fd = lfd;
 	epoll_ctl(epollfd, EPOLL_CTL_ADD, lfd, &ev);
 
-	for (i = 0; i < MAX_CLIENTS; i++)
+	for (i = 0; i < MAX_CLIENTS; i++) {
 		clients[i].fd = -1;
+		clients[i].tfd = -1;
+	}
 
 	/* Don't terminate on -EPIPE */
 	signal(SIGPIPE, SIG_IGN);
-	init_timer();
 
 	for (;;) {
 		int n;
