@@ -16,24 +16,25 @@ body {
 
 var websock = new WebSocket("ws://localhost:1976/");
 
-websock.onopen = function () {
+websock.onopen = function() {
 	var freq = document.getElementById("spin");
 
 	console.log("Connected");
 	send_msg(freq.value);
 };
 
-websock.onclose = function () {
+websock.onclose = function() {
 	console.log("Connection closed");
 	websock.close();
 };
 
-websock.onerror = function () {
+websock.onerror = function() {
 	console.log("Error");
 };
 
-websock.onmessage = function (m) {
+websock.onmessage = function(m) {
 	var msg = JSON.parse(m.data);
+
 	console.log(m.data);
 	document.getElementById("host").innerHTML = msg.host;
 	document.getElementById("uptime").innerHTML = msg.uptime;
@@ -41,11 +42,11 @@ websock.onmessage = function (m) {
 	document.getElementById("txb").innerHTML = msg.tx;
 };
 
-function send_msg (freq) {
+function send_msg(freq) {
 	websock.send(freq);
 };
 
-function spinner (direction) {
+function spinner(direction) {
 	var freq = document.getElementById("spin");
 
 	if (direction == "inc")
