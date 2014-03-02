@@ -36,7 +36,6 @@
 #define SERVER_IP		"0.0.0.0"
 #define SERVER_PORT		1976
 
-#define MAX_CLIENTS		10
 #define MAX_EVENTS		10
 #define BUF_SIZE		4096
 
@@ -45,11 +44,13 @@ struct client_state {
 	int tfd;		/* timer fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
 };
-static struct client_state clients[MAX_CLIENTS];
 
 static int epollfd;
 static struct epoll_event ev;
 static struct epoll_event events[MAX_EVENTS];
+
+static GHashTable *timer_to_socket;	/* timer fd to socket fd lookup */
+static GHashTable *clients;		/* client_states's key'd on sock fd */
 
 #define NET_IF	"p17p1"
 /*
@@ -141,6 +142,8 @@ static void set_client_timer(int freq, struct client_state *client)
 		epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev);
 
 		client->tfd = fd;
+		g_hash_table_insert(timer_to_socket, GINT_TO_POINTER(fd),
+				GINT_TO_POINTER(client->fd));
 	}
 
 	timerfd_settime(client->tfd, 0, &its, NULL);
@@ -275,33 +278,38 @@ static size_t read_client_data(int fd, struct client_state *client)
  */
 static void handle_fd(int fd)
 {
-	int i;
 	ssize_t bytes_read;
 	ssize_t err = 0;	/* 0 allows to fall through check_conn: */
 	char buf[BUF_SIZE + 1];
 	char key[64];
+	struct client_state *client;
+
+	client = g_hash_table_lookup(clients, GINT_TO_POINTER(fd));
+	if (!client) {
+		gpointer sfd = g_hash_table_lookup(timer_to_socket,
+				GINT_TO_POINTER(fd));
+		if (sfd)
+			client = g_hash_table_lookup(clients, sfd);
+	}
+	if (!client)
+		goto new_client;
 
 	/* Check for client timer expiration */
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		if (clients[i].tfd == fd) {
-			uint64_t tbuf;
+	if (client->tfd == fd) {
+		uint64_t tbuf;
 
-			read(fd, &tbuf, sizeof(tbuf));
-			err = do_response(clients[i].fd);
-			goto check_conn;
-		}
+		read(fd, &tbuf, sizeof(tbuf));
+		err = do_response(client->fd);
+		goto check_conn;
 	}
 
 	printf("Got request on %d\n", fd);
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		if (clients[i].fd == fd) {
-			err = read_client_data(fd, &clients[i]);
-			if (err == -1)
-				break;
+	if (client->fd == fd) {
+		err = read_client_data(fd, client);
+		if (err == -1)
+			goto close_conn;
 
-			err = do_response(fd);
-			break;
-		}
+		err = do_response(fd);
 	}
 
 check_conn:
@@ -310,6 +318,7 @@ check_conn:
 	else if (err > 0)
 		return;
 
+new_client:
 	printf("New client\n");
 	bytes_read = read(fd, &buf, BUF_SIZE);
 	if (bytes_read == -1)
@@ -322,19 +331,20 @@ check_conn:
 
 	do_handshake(key, fd);
 
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		if (clients[i].fd == -1) {
-			clients[i].fd = fd;
-			return;
-		}
-	}
+	client = malloc(sizeof(struct client_state));
+
+	client->fd = fd;
+	client->tfd = -1;
+	g_hash_table_insert(clients, GINT_TO_POINTER(fd), client);
+
+	return;
 
 close_conn:
-	printf("Closing connection on %d\n", fd);
-	close(fd);
-	close(clients[i].tfd);
-	clients[i].fd = -1;
-	clients[i].tfd = -1;
+	printf("Closing connection on %d\n", client->fd);
+	close(client->fd);
+	close(client->tfd);
+	g_hash_table_remove(timer_to_socket, GINT_TO_POINTER(client->tfd));
+	g_hash_table_remove(clients, GINT_TO_POINTER(client->fd));
 }
 
 int main(int argc, char *argv[])
@@ -362,10 +372,8 @@ int main(int argc, char *argv[])
 	ev.data.fd = lfd;
 	epoll_ctl(epollfd, EPOLL_CTL_ADD, lfd, &ev);
 
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		clients[i].fd = -1;
-		clients[i].tfd = -1;
-	}
+	clients = g_hash_table_new_full(NULL, NULL, NULL, free);
+	timer_to_socket = g_hash_table_new(NULL, NULL);
 
 	/* Don't terminate on -EPIPE */
 	signal(SIGPIPE, SIG_IGN);
