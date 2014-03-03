@@ -38,6 +38,7 @@ websock.onmessage = function(m) {
 	console.log(m.data);
 	document.getElementById("host").innerHTML = msg.host;
 	document.getElementById("uptime").innerHTML = msg.uptime;
+	document.getElementById("ifname").innerHTML = msg.ifname;
 	document.getElementById("rxb").innerHTML = msg.rx;
 	document.getElementById("txb").innerHTML = msg.tx;
 };
@@ -82,6 +83,10 @@ window.onbeforeunload = function() {
 	<tr>
 		<td align = "right"><b>Uptime : </b></td>
 		<td align = "left"><span id = "uptime"></span></td>
+	</tr>
+	<tr>
+		<td align = "right"><b>IFace : </b></td>
+		<td align = "left"><span id = "ifname"></span></td>
 	</tr>
 	<tr>
 		<td align = "right"><b>RX bytes : </b></td>

@@ -5,8 +5,7 @@ After it gets a connection, every two seconds (default) it will send
 the hostname, uptime and rx & tx bytes of the system running the server
 (can be the same as the client).
 
-Build the server (make), you may want to change the NET_IF #define
-for your system first. Run it (non-root), then load the HTML page
+Build the server (make), run it (non-root), then load the HTML page
 into a browser. You should then see a simple page showing the above
 information updating every two seconds. Adjust the frequency of updates
 using the 'spinner' widget.

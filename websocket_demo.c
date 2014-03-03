@@ -25,6 +25,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <linux/if_link.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
@@ -52,7 +55,6 @@ static struct epoll_event events[MAX_EVENTS];
 static GHashTable *timer_to_socket;	/* timer fd to socket fd lookup */
 static GHashTable *clients;		/* client_states's key'd on sock fd */
 
-#define NET_IF	"p17p1"
 /*
  * Builds some JSON with some system information and sends that to the client
  */
@@ -63,12 +65,12 @@ static ssize_t do_response(int fd)
 	char buf[BUF_SIZE];
 	char tbuf[BUF_SIZE];
 	unsigned long uptime;
-	unsigned long rx;
-	unsigned long tx;
 	uint64_t len;
 	uint64_t plen;
 	int ext_hdr_len = 0;
 	ssize_t bytes_wrote;
+	struct ifaddrs *ifaddr;
+	struct ifaddrs *ifa;
 	FILE *fp;
 
 	len = snprintf(tbuf, sizeof(tbuf), "{ ");
@@ -81,23 +83,32 @@ static ssize_t do_response(int fd)
 
 	fp = fopen("/proc/uptime", "r");
 	fscanf(fp, "%lu", &uptime);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"uptime\": %lu, ",
+	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"uptime\": %lu",
 			uptime);
 	fclose(fp);
 
-	fp = fopen("/proc/net/dev", "r");
-	do {
-		fgets(buf, BUF_SIZE, fp);
-		if (strstr(buf, NET_IF)) {
-			sscanf(buf, " "NET_IF": "
-					"%lu %*d %*d %*d %*d %*d %*d %*d %lu",
-					&rx, &tx);
+	getifaddrs(&ifaddr);
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL ||
+		    strcmp(ifa->ifa_name, "lo") == 0 ||
+		    ifa->ifa_addr->sa_family != AF_PACKET ||
+		    !(ifa->ifa_flags & IFF_UP))
+			continue;
+
+		if (ifa->ifa_data != NULL) {
+			struct rtnl_link_stats *stats = ifa->ifa_data;
+
+			len += snprintf(tbuf + len, sizeof(tbuf) - len,
+					", \"ifname\": \"%s\", ",
+					ifa->ifa_name);
+			len += snprintf(tbuf + len, sizeof(tbuf) - len,
+					"\"rx\": %u, ", stats->rx_bytes);
+			len += snprintf(tbuf + len, sizeof(tbuf) - len,
+					"\"tx\": %u", stats->tx_bytes);
 			break;
 		}
-	} while (!feof(fp));
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"rx\": %lu, ", rx);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"tx\": %lu", tx);
-	fclose(fp);
+	}
+	freeifaddrs(ifaddr);
 
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, " }");
 
