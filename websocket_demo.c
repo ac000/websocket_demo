@@ -243,13 +243,13 @@ static ssize_t decode_frame(char *dest, const char *src)
 	return processed;
 }
 
-static size_t read_client_data(int fd, struct client_state *client)
+static size_t read_client_data(struct client_state *client)
 {
 	ssize_t bytes_read;
 	size_t processed = 0;
 	char buf[BUF_SIZE + 1];
 
-	bytes_read = read(fd, &buf, BUF_SIZE);
+	bytes_read = read(client->fd, &buf, BUF_SIZE);
 	if (bytes_read == -1)
 		return -1;
 	printf("Received data from client (%ld bytes)\n", bytes_read);
@@ -270,55 +270,23 @@ static size_t read_client_data(int fd, struct client_state *client)
 	return processed;
 }
 
-/*
- * Handle one of three different fd's.
- *    1a) An accept(2)'ed file descriptor for a new connection
- *    1b) An already connected socket
- *     2) A timer file descriptor
- */
-static void handle_fd(int fd)
+static void close_conn(struct client_state *client)
+{
+	printf("Closing connection on %d\n", client->fd);
+
+	close(client->fd);
+	close(client->tfd);
+	g_hash_table_remove(timer_to_socket, GINT_TO_POINTER(client->tfd));
+	g_hash_table_remove(clients, GINT_TO_POINTER(client->fd));
+}
+
+static void new_client(int fd)
 {
 	ssize_t bytes_read;
-	ssize_t err = 0;	/* 0 allows to fall through check_conn: */
 	char buf[BUF_SIZE + 1];
 	char key[64];
 	struct client_state *client;
 
-	client = g_hash_table_lookup(clients, GINT_TO_POINTER(fd));
-	if (!client) {
-		gpointer sfd = g_hash_table_lookup(timer_to_socket,
-				GINT_TO_POINTER(fd));
-		if (sfd)
-			client = g_hash_table_lookup(clients, sfd);
-	}
-	if (!client)
-		goto new_client;
-
-	/* Check for client timer expiration */
-	if (client->tfd == fd) {
-		uint64_t tbuf;
-
-		read(fd, &tbuf, sizeof(tbuf));
-		err = do_response(client->fd);
-		goto check_conn;
-	}
-
-	printf("Got request on %d\n", fd);
-	if (client->fd == fd) {
-		err = read_client_data(fd, client);
-		if (err == -1)
-			goto close_conn;
-
-		err = do_response(fd);
-	}
-
-check_conn:
-	if (err == -1)
-		goto close_conn;
-	else if (err > 0)
-		return;
-
-new_client:
 	printf("New client\n");
 	bytes_read = read(fd, &buf, BUF_SIZE);
 	if (bytes_read == -1)
@@ -336,15 +304,59 @@ new_client:
 	client->fd = fd;
 	client->tfd = -1;
 	g_hash_table_insert(clients, GINT_TO_POINTER(fd), client);
+}
 
-	return;
+static void handle_socket(struct client_state *client)
+{
+	int err;
 
-close_conn:
-	printf("Closing connection on %d\n", client->fd);
-	close(client->fd);
-	close(client->tfd);
-	g_hash_table_remove(timer_to_socket, GINT_TO_POINTER(client->tfd));
-	g_hash_table_remove(clients, GINT_TO_POINTER(client->fd));
+	printf("Got request on %d\n", client->fd);
+
+	err = read_client_data(client);
+	if (err == -1) {
+		close_conn(client);
+		return;
+	}
+
+	err = do_response(client->fd);
+	if (err == -1)
+		 close_conn(client);
+}
+
+static void handle_timer(struct client_state *client)
+{
+	uint64_t tbuf;
+	int err;
+
+	read(client->tfd, &tbuf, sizeof(tbuf));
+	err = do_response(client->fd);
+	if (err == -1)
+		close_conn(client);
+}
+
+/*
+ * Handle one of three different fd's.
+ *    1a) An accept(2)'ed file descriptor for a new connection
+ *    1b) An already connected socket
+ *     2) A timer file descriptor
+ */
+static void handle_fd(int fd)
+{
+	gpointer sfd;
+	struct client_state *client;
+
+	sfd = g_hash_table_lookup(timer_to_socket, GINT_TO_POINTER(fd));
+	if (sfd) {
+		/* Timer fd */
+		client = g_hash_table_lookup(clients, sfd);
+		handle_timer(client);
+	} else {
+		client = g_hash_table_lookup(clients, GINT_TO_POINTER(fd));
+		if (client)
+			handle_socket(client);
+		else
+			new_client(fd);
+	}
 }
 
 int main(int argc, char *argv[])
