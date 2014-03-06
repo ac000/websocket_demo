@@ -67,6 +67,8 @@ static ssize_t do_response(int fd)
 	unsigned long uptime;
 	uint64_t len;
 	uint64_t plen;
+	uint64_t rx_bytes;
+	uint64_t tx_bytes;
 	int ext_hdr_len = 0;
 	ssize_t bytes_wrote;
 	struct ifaddrs *ifaddr;
@@ -95,18 +97,26 @@ static ssize_t do_response(int fd)
 		    !(ifa->ifa_flags & IFF_UP))
 			continue;
 
-		if (ifa->ifa_data != NULL) {
-			struct rtnl_link_stats *stats = ifa->ifa_data;
-
-			len += snprintf(tbuf + len, sizeof(tbuf) - len,
-					", \"ifname\": \"%s\", ",
-					ifa->ifa_name);
-			len += snprintf(tbuf + len, sizeof(tbuf) - len,
-					"\"rx\": %u, ", stats->rx_bytes);
-			len += snprintf(tbuf + len, sizeof(tbuf) - len,
-					"\"tx\": %u", stats->tx_bytes);
-			break;
+		fp = fopen("/proc/net/dev", "r");
+		while (fgets(buf, BUF_SIZE, fp)) {
+			if (strstr(buf, ifa->ifa_name)) {
+				sscanf(buf, "%*[ a-z0-9_-]: "
+						"%lu %*d %*d %*d %*d %*d %*d "
+						"%*d %lu",
+						&rx_bytes, &tx_bytes);
+				break;
+			}
 		}
+		fclose(fp);
+
+		len += snprintf(tbuf + len, sizeof(tbuf) - len,
+				", \"ifname\": \"%s\", ", ifa->ifa_name);
+		len += snprintf(tbuf + len, sizeof(tbuf) - len,
+				"\"rx\": %lu, ", (uint64_t)rx_bytes);
+		len += snprintf(tbuf + len, sizeof(tbuf) - len,
+				"\"tx\": %lu", (uint64_t)tx_bytes);
+
+		break;
 	}
 	freeifaddrs(ifaddr);
 
