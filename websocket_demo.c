@@ -77,11 +77,9 @@ static ssize_t do_response(int fd)
 
 	len = snprintf(tbuf, sizeof(tbuf), "{ ");
 
-	fp = fopen("/etc/hostname", "r");
-	fscanf(fp, "%4095s", buf);
+	gethostname(buf, HOST_NAME_MAX);
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"host\": \"%s\", ",
 			buf);
-	fclose(fp);
 
 	fp = fopen("/proc/uptime", "r");
 	fscanf(fp, "%lu", &uptime);
