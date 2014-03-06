@@ -55,6 +55,49 @@ static struct epoll_event events[MAX_EVENTS];
 static GHashTable *timer_to_socket;	/* timer fd to socket fd lookup */
 static GHashTable *clients;		/* client_states's key'd on sock fd */
 
+static char hostname[HOST_NAME_MAX + 1];
+static char net_if[32] = "lo";
+
+static void get_net_if(void)
+{
+	struct ifaddrs *ifaddr;
+	struct ifaddrs *ifa;
+
+	getifaddrs(&ifaddr);
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL ||
+		    strcmp(ifa->ifa_name, "lo") == 0 ||
+		    ifa->ifa_addr->sa_family != AF_PACKET ||
+		    !(ifa->ifa_flags & IFF_UP))
+			continue;
+
+		snprintf(net_if, sizeof(net_if), "%s", ifa->ifa_name);
+		break;
+	}
+	freeifaddrs(ifaddr);
+}
+
+static void get_stats(unsigned long *uptime, uint64_t *rx, uint64_t *tx)
+{
+	char buf[BUF_SIZE];
+	FILE *fp;
+
+	fp = fopen("/proc/uptime", "r");
+	fscanf(fp, "%lu", uptime);
+	fclose(fp);
+
+	fp = fopen("/proc/net/dev", "r");
+	while (fgets(buf, BUF_SIZE, fp)) {
+		if (strstr(buf, net_if)) {
+			sscanf(buf, "%*[ a-z0-9_-]: "
+					"%lu %*d %*d %*d %*d %*d %*d %*d %lu",
+					rx, tx);
+			break;
+		}
+	}
+	fclose(fp);
+}
+
 /*
  * Builds some JSON with some system information and sends that to the client
  */
@@ -71,53 +114,20 @@ static ssize_t do_response(int fd)
 	uint64_t tx_bytes;
 	int ext_hdr_len = 0;
 	ssize_t bytes_wrote;
-	struct ifaddrs *ifaddr;
-	struct ifaddrs *ifa;
-	FILE *fp;
+
+	get_stats(&uptime, &rx_bytes, &tx_bytes);
 
 	len = snprintf(tbuf, sizeof(tbuf), "{ ");
-
-	gethostname(buf, HOST_NAME_MAX);
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"host\": \"%s\", ",
-			buf);
-
-	fp = fopen("/proc/uptime", "r");
-	fscanf(fp, "%lu", &uptime);
+			hostname);
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"uptime\": %lu",
 			uptime);
-	fclose(fp);
-
-	getifaddrs(&ifaddr);
-	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr == NULL ||
-		    strcmp(ifa->ifa_name, "lo") == 0 ||
-		    ifa->ifa_addr->sa_family != AF_PACKET ||
-		    !(ifa->ifa_flags & IFF_UP))
-			continue;
-
-		fp = fopen("/proc/net/dev", "r");
-		while (fgets(buf, BUF_SIZE, fp)) {
-			if (strstr(buf, ifa->ifa_name)) {
-				sscanf(buf, "%*[ a-z0-9_-]: "
-						"%lu %*d %*d %*d %*d %*d %*d "
-						"%*d %lu",
-						&rx_bytes, &tx_bytes);
-				break;
-			}
-		}
-		fclose(fp);
-
-		len += snprintf(tbuf + len, sizeof(tbuf) - len,
-				", \"ifname\": \"%s\", ", ifa->ifa_name);
-		len += snprintf(tbuf + len, sizeof(tbuf) - len,
-				"\"rx\": %lu, ", (uint64_t)rx_bytes);
-		len += snprintf(tbuf + len, sizeof(tbuf) - len,
-				"\"tx\": %lu", (uint64_t)tx_bytes);
-
-		break;
-	}
-	freeifaddrs(ifaddr);
-
+	len += snprintf(tbuf + len, sizeof(tbuf) - len,
+			", \"ifname\": \"%s\", ", net_if);
+	len += snprintf(tbuf + len, sizeof(tbuf) - len,
+			"\"rx\": %lu, ", (uint64_t)rx_bytes);
+	len += snprintf(tbuf + len, sizeof(tbuf) - len,
+			"\"tx\": %lu", (uint64_t)tx_bytes);
 	len += snprintf(tbuf + len, sizeof(tbuf) - len, " }");
 
 	/* Set the extra payload length header if required */
@@ -408,6 +418,11 @@ int main(int argc, char *argv[])
 
 	/* Don't terminate on -EPIPE */
 	signal(SIGPIPE, SIG_IGN);
+
+	/* Get the hostname and network interface */
+	memset(hostname, 0, sizeof(hostname));
+	gethostname(hostname, HOST_NAME_MAX);
+	get_net_if();
 
 	for (;;) {
 		int n;
