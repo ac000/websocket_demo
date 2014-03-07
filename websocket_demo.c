@@ -68,7 +68,7 @@ static void get_net_if(void)
 		if (ifa->ifa_addr == NULL ||
 		    strcmp(ifa->ifa_name, "lo") == 0 ||
 		    ifa->ifa_addr->sa_family != AF_PACKET ||
-		    !(ifa->ifa_flags & IFF_UP))
+		    !(ifa->ifa_flags & IFF_RUNNING))
 			continue;
 
 		snprintf(net_if, sizeof(net_if), "%s", ifa->ifa_name);
