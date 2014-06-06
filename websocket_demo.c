@@ -79,22 +79,23 @@ static void get_net_if(void)
 
 static void get_stats(unsigned long *uptime, uint64_t *rx, uint64_t *tx)
 {
-	char buf[BUF_SIZE];
+	char path[PATH_MAX];
 	FILE *fp;
 
 	fp = fopen("/proc/uptime", "r");
 	fscanf(fp, "%lu", uptime);
 	fclose(fp);
 
-	fp = fopen("/proc/net/dev", "r");
-	while (fgets(buf, BUF_SIZE, fp)) {
-		if (strstr(buf, net_if)) {
-			sscanf(buf, "%*[ a-z0-9_-]: "
-					"%lu %*d %*d %*d %*d %*d %*d %*d %lu",
-					rx, tx);
-			break;
-		}
-	}
+	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/rx_bytes",
+			net_if);
+	fp = fopen(path, "r");
+	fscanf(fp, "%lu", rx);
+	fclose(fp);
+
+	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/tx_bytes",
+			net_if);
+	fp = fopen(path, "r");
+	fscanf(fp, "%lu", tx);
 	fclose(fp);
 }
 
