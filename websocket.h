@@ -45,7 +45,7 @@ struct websocket_header {
         uint16_t masked:1;
 };
 
-const char *websocket_opcodes[16] = {
+static const char *websocket_opcodes[] = {
 	"Continuation Frame",
 	"Text Frame",
 	"Binary Frame",
