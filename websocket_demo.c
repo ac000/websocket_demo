@@ -3,7 +3,7 @@
  *
  * WebSockets are defined here: http://tools.ietf.org/html/rfc6455
  *
- * Copyright (C) 2014	Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014 - 2015	Andrew Clayton <andrew@digital-domain.net>
  *
  * Licensed under the GNU General Public License Version 2
  * See COPYING
@@ -106,6 +106,8 @@ static ssize_t do_response(int fd)
 {
 	struct websocket_header wh = {  .opcode = 0x01, .rsv3 = 0, .rsv2 = 0,
 					.rsv1 = 0, .fin = 1, .masked = 0 };
+	const char *json_fmt = "{ \"host\": \"%s\", \"uptime\": %lu, "
+			"\"ifname\": \"%s\", \"rx\": %lu, \"tx\": %lu }";
 	char buf[BUF_SIZE];
 	char tbuf[BUF_SIZE];
 	unsigned long uptime;
@@ -118,18 +120,8 @@ static ssize_t do_response(int fd)
 
 	get_stats(&uptime, &rx_bytes, &tx_bytes);
 
-	len = snprintf(tbuf, sizeof(tbuf), "{ ");
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"host\": \"%s\", ",
-			hostname);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, "\"uptime\": %lu",
-			uptime);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len,
-			", \"ifname\": \"%s\", ", net_if);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len,
-			"\"rx\": %lu, ", (uint64_t)rx_bytes);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len,
-			"\"tx\": %lu", (uint64_t)tx_bytes);
-	len += snprintf(tbuf + len, sizeof(tbuf) - len, " }");
+	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, uptime, net_if,
+			(uint64_t)rx_bytes, (uint64_t)tx_bytes);
 
 	/* Set the extra payload length header if required */
 	if (len <= PAYLEN_LEN) {
