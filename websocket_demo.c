@@ -23,11 +23,10 @@
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
-#include <linux/if_link.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
@@ -37,7 +36,7 @@
 #include "websocket.h"
 
 #define SERVER_IP		"0.0.0.0"
-#define SERVER_PORT		1976
+#define SERVER_PORT		"1976"
 
 #define MAX_EVENTS		10
 #define BUF_SIZE		4096
@@ -383,23 +382,32 @@ static void handle_fd(int fd)
 
 int main(int argc, char *argv[])
 {
-	int i;
+	int optval = 1;
 	int timeout = -1;
 	int lfd;
-	socklen_t server_len;
-	struct sockaddr_in server_address;
+	socklen_t optlen = sizeof(optval);
+	struct addrinfo hints;
+	struct addrinfo *res;
 
-	memset(&server_address, 0, sizeof(server_address));
-	server_address.sin_family = AF_INET;
-	server_address.sin_addr.s_addr = inet_addr(SERVER_IP);
-	server_address.sin_port = htons(SERVER_PORT);
-	server_len = sizeof(server_address);
+	memset(&hints, 0, sizeof(hints));
+	if (strchr(SERVER_IP, ':'))
+		hints.ai_family = AF_INET6;
+	else
+		hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | AI_PASSIVE;
+	hints.ai_protocol = 0;
 
-	lfd = socket(server_address.sin_family, SOCK_STREAM, 0);
-	i = 1;
-	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &i, sizeof(i));
-	bind(lfd, (struct sockaddr *)&server_address, server_len);
+	getaddrinfo(SERVER_IP, SERVER_PORT, &hints, &res);
+
+	lfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &optval, optlen);
+	if (res->ai_family == AF_INET6)
+		setsockopt(lfd, SOL_IPV6, IPV6_V6ONLY, &optval, optlen);
+
+	bind(lfd, res->ai_addr, res->ai_addrlen);
 	listen(lfd, 5);
+	freeaddrinfo(res);
 
 	epollfd = epoll_create1(0);
 	ev.events = EPOLLIN;
