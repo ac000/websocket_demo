@@ -41,6 +41,12 @@
 #define MAX_EVENTS		10
 #define BUF_SIZE		4096
 
+#define err_exit(func)	\
+	do { \
+		perror(func); \
+		exit(EXIT_FAILURE); \
+	} while (0)
+
 struct client_state {
 	int fd;			/* accept fd */
 	int tfd;		/* timer fd */
@@ -385,6 +391,7 @@ int main(int argc, char *argv[])
 	int optval = 1;
 	int timeout = -1;
 	int lfd;
+	int err;
 	socklen_t optlen = sizeof(optval);
 	struct addrinfo hints;
 	struct addrinfo *res;
@@ -398,15 +405,26 @@ int main(int argc, char *argv[])
 	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | AI_PASSIVE;
 	hints.ai_protocol = 0;
 
-	getaddrinfo(SERVER_IP, SERVER_PORT, &hints, &res);
+	err = getaddrinfo(SERVER_IP, SERVER_PORT, &hints, &res);
+	if (err)
+		err_exit("getaddrinfo");
 
 	lfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	if (lfd == -1)
+		err_exit("socket");
+
 	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &optval, optlen);
 	if (res->ai_family == AF_INET6)
 		setsockopt(lfd, SOL_IPV6, IPV6_V6ONLY, &optval, optlen);
 
-	bind(lfd, res->ai_addr, res->ai_addrlen);
-	listen(lfd, 5);
+	err = bind(lfd, res->ai_addr, res->ai_addrlen);
+	if (err)
+		err_exit("bind");
+
+	err = listen(lfd, 5);
+	if (err)
+		err_exit("listen");
+
 	freeaddrinfo(res);
 
 	epollfd = epoll_create1(0);
