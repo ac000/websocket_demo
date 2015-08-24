@@ -35,7 +35,6 @@
 
 #include "websocket.h"
 
-#define SERVER_IP		"0.0.0.0"
 #define SERVER_PORT		"1976"
 
 #define MAX_EVENTS		10
@@ -53,7 +52,7 @@ struct client_state {
 	char msg[BUF_SIZE + 1];	/* Data from client */
 };
 
-static int epollfd;
+static int ecfd;
 static struct epoll_event ev;
 static struct epoll_event events[MAX_EVENTS];
 
@@ -62,6 +61,12 @@ static GHashTable *clients;		/* client_states's key'd on sock fd */
 
 static char hostname[HOST_NAME_MAX + 1];
 static char net_if[32] = "lo";
+
+static const char *_listen_ips[] = {
+	"127.0.0.1",
+	"::1",
+	(const char *)NULL
+};
 
 static void get_net_if(void)
 {
@@ -166,7 +171,7 @@ static void set_client_timer(int freq, struct client_state *client)
 		int fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
 		ev.events = EPOLLIN | EPOLLET;
 		ev.data.fd = fd;
-		epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev);
+		epoll_ctl(ecfd, EPOLL_CTL_ADD, fd, &ev);
 
 		client->tfd = fd;
 		g_hash_table_insert(timer_to_socket, GINT_TO_POINTER(fd),
@@ -386,18 +391,17 @@ static void handle_fd(int fd)
 	}
 }
 
-int main(int argc, char *argv[])
+static int do_bind(const char *listen_ip)
 {
-	int optval = 1;
-	int timeout = -1;
 	int lfd;
+	int optval = 1;
 	int err;
 	socklen_t optlen = sizeof(optval);
 	struct addrinfo hints;
 	struct addrinfo *res;
 
 	memset(&hints, 0, sizeof(hints));
-	if (strchr(SERVER_IP, ':'))
+	if (strchr(listen_ip, ':'))
 		hints.ai_family = AF_INET6;
 	else
 		hints.ai_family = AF_INET;
@@ -405,7 +409,7 @@ int main(int argc, char *argv[])
 	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | AI_PASSIVE;
 	hints.ai_protocol = 0;
 
-	err = getaddrinfo(SERVER_IP, SERVER_PORT, &hints, &res);
+	err = getaddrinfo(listen_ip, SERVER_PORT, &hints, &res);
 	if (err)
 		err_exit("getaddrinfo");
 
@@ -427,10 +431,34 @@ int main(int argc, char *argv[])
 
 	freeaddrinfo(res);
 
-	epollfd = epoll_create1(0);
+	return lfd;
+}
+
+int main(int argc, char *argv[])
+{
+	int elfd = epoll_create1(0);
+	int timeout = -1;
+	const char **listen_ips = _listen_ips;
+
+	for ( ; *listen_ips != NULL; listen_ips++) {
+		const char *ip = *listen_ips;
+		int lfd = do_bind(ip);
+
+		printf("Listening on : %s%s%s:%s\n",
+				(strchr(ip, ':')) ? "[" : "",
+				ip,
+				(strchr(ip, ':')) ? "]" : "",
+				SERVER_PORT);
+		ev.events = EPOLLIN;
+		ev.data.fd = lfd;
+		epoll_ctl(elfd, EPOLL_CTL_ADD, lfd, &ev);
+	}
+
+	/* Add the epoll client connection fd to the listen epoll set */
+	ecfd = epoll_create1(0);
 	ev.events = EPOLLIN;
-	ev.data.fd = lfd;
-	epoll_ctl(epollfd, EPOLL_CTL_ADD, lfd, &ev);
+	ev.data.fd = ecfd;
+	epoll_ctl(elfd, EPOLL_CTL_ADD, ecfd, &ev);
 
 	clients = g_hash_table_new_full(NULL, NULL, NULL, free);
 	timer_to_socket = g_hash_table_new(NULL, NULL);
@@ -443,21 +471,24 @@ int main(int argc, char *argv[])
 	gethostname(hostname, HOST_NAME_MAX);
 	get_net_if();
 
-	for (;;) {
+	for ( ; ; ) {
 		int n;
 		int nfds;
-		int cfd;
 
-		nfds = epoll_wait(epollfd, events, MAX_EVENTS, timeout);
+		nfds = epoll_wait(elfd, events, MAX_EVENTS, timeout);
 		for (n = 0; n < nfds; n++) {
-			if (events[n].data.fd == lfd) {
-				cfd = accept4(lfd, NULL, NULL, O_NONBLOCK);
+			if (events[n].data.fd != ecfd) {
+				int cfd = accept4(events[n].data.fd, NULL,
+						NULL, O_NONBLOCK);
 
 				ev.events = EPOLLIN | EPOLLET;
 				ev.data.fd = cfd;
-				epoll_ctl(epollfd, EPOLL_CTL_ADD, cfd, &ev);
+				epoll_ctl(ecfd, EPOLL_CTL_ADD, cfd, &ev);
 			} else {
-				handle_fd(events[n].data.fd);
+				nfds = epoll_wait(ecfd, events, MAX_EVENTS,
+						timeout);
+				for (n = 0; n < nfds; n++)
+					handle_fd(events[n].data.fd);
 			}
 		}
 	}
