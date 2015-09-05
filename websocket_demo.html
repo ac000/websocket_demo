@@ -15,6 +15,8 @@ body {
 <script language = "javascript" type = "text/javascript">
 
 var websock = new WebSocket("ws://localhost:1976/");
+var ignore_websock = false;
+var selected_netif = "";
 
 websock.onopen = function() {
 	var freq = document.getElementById("spin");
@@ -34,14 +36,50 @@ websock.onerror = function() {
 
 websock.onmessage = function(m) {
 	var msg = JSON.parse(m.data);
+	var dropdown = "<select id = \"netif\" onmouseenter = \"ign_ws()\" onmouseleave =\"unign_ws()\">";
+	var i;
+
+	if (ignore_websock)
+		return;
 
 	console.log(m.data);
 	document.getElementById("host").innerHTML = msg.host;
 	document.getElementById("uptime").innerHTML = msg.uptime;
-	document.getElementById("ifname").innerHTML = msg.ifname;
 	document.getElementById("rxb").innerHTML = msg.rx;
 	document.getElementById("txb").innerHTML = msg.tx;
+
+	for (i = 0; i < msg.ifnames.length; i++) {
+		var netif = msg.ifnames[i];
+		var select = "";
+
+		if (netif == selected_netif ||
+		    (!selected_netif && netif == msg.ifname))
+			select = "selected";
+
+		dropdown += "<option value =\"" + netif +
+			"\" onclick = \"select_netif()\" " + select + ">" +
+			netif + "</option>";
+	}
+	dropdown += "</select>";
+
+	document.getElementById("netif_dd").innerHTML = dropdown;
 };
+
+function select_netif() {
+	var e = document.getElementById("netif");
+
+	selected_netif = e.options[e.selectedIndex].value;
+	websock.send(selected_netif);
+	ignore_websock = false;
+}
+
+function ign_ws() {
+	ignore_websock = true;
+}
+
+function unign_ws() {
+	ignore_websock = false;
+}
 
 function send_msg(freq) {
 	websock.send(freq);
@@ -86,7 +124,7 @@ window.onbeforeunload = function() {
 	</tr>
 	<tr>
 		<td align = "right"><b>IFace : </b></td>
-		<td align = "left"><span id = "ifname"></span></td>
+		<td align = "left"><span id = "netif_dd"></span></td>
 	</tr>
 	<tr>
 		<td align = "right"><b>RX bytes : </b></td>

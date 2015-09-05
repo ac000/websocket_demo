@@ -50,6 +50,7 @@ struct client_state {
 	int fd;			/* accept fd */
 	int tfd;		/* timer fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
+	char net_if[32];	/* Network interface to show stats for */
 };
 
 static int ecfd;
@@ -60,7 +61,7 @@ static GHashTable *timer_to_socket;	/* timer fd to socket fd lookup */
 static GHashTable *clients;		/* client_states's key'd on sock fd */
 
 static char hostname[HOST_NAME_MAX + 1];
-static char net_if[32] = "lo";
+static char def_net_if[32] = "lo";
 
 static const char *_listen_ips[] = {
 	"127.0.0.1",
@@ -68,7 +69,7 @@ static const char *_listen_ips[] = {
 	(const char *)NULL
 };
 
-static void get_net_if(void)
+static void set_def_net_if(void)
 {
 	struct ifaddrs *ifaddr;
 	struct ifaddrs *ifa;
@@ -81,13 +82,14 @@ static void get_net_if(void)
 		    !(ifa->ifa_flags & IFF_RUNNING))
 			continue;
 
-		snprintf(net_if, sizeof(net_if), "%s", ifa->ifa_name);
+		snprintf(def_net_if, sizeof(def_net_if), "%s", ifa->ifa_name);
 		break;
 	}
 	freeifaddrs(ifaddr);
 }
 
-static void get_stats(unsigned long *uptime, uint64_t *rx, uint64_t *tx)
+static void get_stats(const char *net_if, unsigned long *uptime, uint64_t *rx,
+		      uint64_t *tx)
 {
 	char path[PATH_MAX];
 	FILE *fp;
@@ -112,12 +114,13 @@ static void get_stats(unsigned long *uptime, uint64_t *rx, uint64_t *tx)
 /*
  * Builds some JSON with some system information and sends that to the client
  */
-static ssize_t do_response(int fd)
+static ssize_t do_response(struct client_state *client)
 {
 	struct websocket_header wh = {  .opcode = 0x01, .rsv3 = 0, .rsv2 = 0,
 					.rsv1 = 0, .fin = 1, .masked = 0 };
 	const char *json_fmt = "{ \"host\": \"%s\", \"uptime\": %lu, "
-			"\"ifname\": \"%s\", \"rx\": %lu, \"tx\": %lu }";
+			"\"ifname\": \"%s\", \"rx\": %lu, \"tx\": %lu, "
+			"\"ifnames\": [ ";
 	char buf[BUF_SIZE];
 	char tbuf[BUF_SIZE];
 	unsigned long uptime;
@@ -127,11 +130,25 @@ static ssize_t do_response(int fd)
 	uint64_t tx_bytes;
 	int ext_hdr_len = 0;
 	ssize_t bytes_wrote;
+	struct ifaddrs *ifaddr;
+	struct ifaddrs *ifa;
 
-	get_stats(&uptime, &rx_bytes, &tx_bytes);
-
-	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, uptime, net_if,
-			(uint64_t)rx_bytes, (uint64_t)tx_bytes);
+	get_stats(client->net_if, &uptime, &rx_bytes, &tx_bytes);
+	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, uptime,
+			client->net_if, (uint64_t)rx_bytes, (uint64_t)tx_bytes);
+	getifaddrs(&ifaddr);
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL)
+			continue;
+		if (ifa->ifa_addr->sa_family != AF_PACKET)
+			break;
+		len += snprintf(tbuf + len, sizeof(tbuf) - len,
+				"\"%s\", ", ifa->ifa_name);
+	}
+	freeifaddrs(ifaddr);
+	len -= 2;
+	tbuf[len] = '\0';
+	len += snprintf(tbuf + len, sizeof(tbuf) - len, " ] }");
 
 	/* Set the extra payload length header if required */
 	if (len <= PAYLEN_LEN) {
@@ -150,7 +167,7 @@ static ssize_t do_response(int fd)
 	if (len > PAYLEN_LEN)
 		memcpy(buf + SHORT_HDR_LEN, &plen, ext_hdr_len);
 	memcpy(buf + SHORT_HDR_LEN + ext_hdr_len, tbuf, len);
-	bytes_wrote = write(fd, buf, SHORT_HDR_LEN + ext_hdr_len + len);
+	bytes_wrote = write(client->fd, buf, SHORT_HDR_LEN + ext_hdr_len + len);
 
 	return bytes_wrote;
 }
@@ -158,11 +175,11 @@ static ssize_t do_response(int fd)
 /*
  * Creates and/or adjusts the clients update timer
  */
-static void set_client_timer(int freq, struct client_state *client)
+static void set_client_timer(struct client_state *client)
 {
 	struct itimerspec its;
 
-	its.it_value.tv_sec = freq;
+	its.it_value.tv_sec = atoi(client->msg);
 	its.it_value.tv_nsec = 0;
 	its.it_interval.tv_sec = its.it_value.tv_sec;
 	its.it_interval.tv_nsec = its.it_value.tv_nsec;
@@ -179,6 +196,8 @@ static void set_client_timer(int freq, struct client_state *client)
 	}
 
 	timerfd_settime(client->tfd, 0, &its, NULL);
+	printf("Setting client update frequency to %ld seconds\n",
+			its.it_value.tv_sec);
 }
 
 /*
@@ -286,17 +305,16 @@ static size_t read_client_data(struct client_state *client)
 		return -1;
 	printf("Received data from client (%ld bytes)\n", bytes_read);
 	do {
-		int freq;
-
 		memset(client->msg, 0, sizeof(client->msg));
 		processed += decode_frame(client->msg, buf + processed);
 		if (processed == -1)
 			break;
 		printf("Client data -:\n\n%s\n", client->msg);
-		freq = atoi(client->msg);
-		set_client_timer(freq, client);
-		printf("Setting client update frequency to %d seconds\n",
-				freq);
+		if (client->msg[0] < '0' || client->msg[0] > '9')
+			snprintf(client->net_if, sizeof(client->net_if), "%s",
+					client->msg);
+		else
+			set_client_timer(client);
 	} while (processed < bytes_read);
 
 	return processed;
@@ -335,6 +353,7 @@ static void new_client(int fd)
 
 	client->fd = fd;
 	client->tfd = -1;
+	strcpy(client->net_if, def_net_if);
 	g_hash_table_insert(clients, GINT_TO_POINTER(fd), client);
 }
 
@@ -350,7 +369,7 @@ static void handle_socket(struct client_state *client)
 		return;
 	}
 
-	err = do_response(client->fd);
+	err = do_response(client);
 	if (err == -1)
 		 close_conn(client);
 }
@@ -361,7 +380,7 @@ static void handle_timer(struct client_state *client)
 	int err;
 
 	read(client->tfd, &tbuf, sizeof(tbuf));
-	err = do_response(client->fd);
+	err = do_response(client);
 	if (err == -1)
 		close_conn(client);
 }
@@ -469,7 +488,7 @@ int main(int argc, char *argv[])
 	/* Get the hostname and network interface */
 	memset(hostname, 0, sizeof(hostname));
 	gethostname(hostname, HOST_NAME_MAX);
-	get_net_if();
+	set_def_net_if();
 
 	for ( ; ; ) {
 		int n;

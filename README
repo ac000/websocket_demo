@@ -7,8 +7,8 @@ the hostname, uptime and rx & tx bytes of the system running the server
 
 Build the server (make), run it (non-root), then load the HTML page
 into a browser. You should then see a simple page showing the above
-information updating every two seconds. Adjust the frequency of updates
-using the 'spinner' widget.
+information updating every two seconds. Change the interface to show
+stats for and adjust the frequency of updates using the 'spinner' widget.
 
 Really simple, just shows the basics of what's needed for two way
 communications.
