@@ -437,7 +437,6 @@ static int do_bind(const char *listen_ip)
 		hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | AI_PASSIVE;
-	hints.ai_protocol = 0;
 
 	err = getaddrinfo(listen_ip, SERVER_PORT, &hints, &res);
 	if (err)
