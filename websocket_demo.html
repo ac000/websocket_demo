@@ -45,6 +45,7 @@ websock.onmessage = function(m) {
 
 	console.log(m.data);
 	document.getElementById("host").innerHTML = msg.host;
+	document.getElementById("peerip").innerHTML = msg.peerip;
 	document.getElementById("uptime").innerHTML = msg.uptime;
 	document.getElementById("rxb").innerHTML = msg.rx;
 	document.getElementById("txb").innerHTML = msg.tx;
@@ -119,6 +120,8 @@ window.onbeforeunload = function() {
 	<big>WebSockets Demo</big>
 	<p />
 	<big><b><span id = "host"></span></b></big>
+	<p />
+	<font color = "#666666" size = "4">your IP address: <span id = "peerip"></span></font>
 </center>
 
 <br /><br />

@@ -51,6 +51,7 @@ struct client_state {
 	int tfd;		/* timer fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
 	char net_if[32];	/* Network interface to show stats for */
+	char peerip[INET6_ADDRSTRLEN];	/* Clients IP address */
 };
 
 static int ecfd;
@@ -122,9 +123,9 @@ static ssize_t do_response(struct client_state *client)
 {
 	struct websocket_header wh = {  .opcode = 0x01, .rsv3 = 0, .rsv2 = 0,
 					.rsv1 = 0, .fin = 1, .masked = 0 };
-	const char *json_fmt = "{ \"host\": \"%s\", \"uptime\": %lu, "
-			"\"ifname\": \"%s\", \"rx\": %lu, \"tx\": %lu, "
-			"\"ifnames\": [ ";
+	const char *json_fmt = "{ \"host\": \"%s\", \"peerip\": \"%s\", "
+		"\"uptime\": %lu, \"ifname\": \"%s\", \"rx\": %lu, "
+		"\"tx\": %lu, \"ifnames\": [ ";
 	char buf[BUF_SIZE];
 	char tbuf[BUF_SIZE];
 	unsigned long uptime;
@@ -138,8 +139,9 @@ static ssize_t do_response(struct client_state *client)
 	struct ifaddrs *ifa;
 
 	get_stats(client->net_if, &uptime, &rx_bytes, &tx_bytes);
-	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, uptime,
-			client->net_if, (uint64_t)rx_bytes, (uint64_t)tx_bytes);
+	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, client->peerip,
+			uptime, client->net_if, (uint64_t)rx_bytes,
+			(uint64_t)tx_bytes);
 	getifaddrs(&ifaddr);
 	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
 		if (ifa->ifa_addr == NULL)
@@ -340,6 +342,8 @@ static void new_client(int fd)
 	char buf[BUF_SIZE + 1];
 	char key[64];
 	struct client_state *client;
+	struct sockaddr_storage ss;
+	socklen_t sslen = sizeof(ss);
 
 	printf("New client\n");
 	bytes_read = read(fd, &buf, BUF_SIZE);
@@ -358,6 +362,9 @@ static void new_client(int fd)
 	client->fd = fd;
 	client->tfd = -1;
 	strcpy(client->net_if, def_net_if);
+	getpeername(fd, (struct sockaddr *)&ss, &sslen);
+	getnameinfo((struct sockaddr *)&ss, sslen, client->peerip,
+			INET6_ADDRSTRLEN, NULL, 0, NI_NUMERICHOST);
 	g_hash_table_insert(clients, GINT_TO_POINTER(fd), client);
 }
 
