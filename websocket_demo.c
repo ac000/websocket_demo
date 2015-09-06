@@ -101,14 +101,18 @@ static void get_stats(const char *net_if, unsigned long *uptime, uint64_t *rx,
 	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/rx_bytes",
 			net_if);
 	fp = fopen(path, "r");
-	fscanf(fp, "%lu", rx);
-	fclose(fp);
+	if (fp) {
+		fscanf(fp, "%lu", rx);
+		fclose(fp);
+	}
 
 	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/tx_bytes",
 			net_if);
 	fp = fopen(path, "r");
-	fscanf(fp, "%lu", tx);
-	fclose(fp);
+	if (fp) {
+		fscanf(fp, "%lu", tx);
+		fclose(fp);
+	}
 }
 
 /*

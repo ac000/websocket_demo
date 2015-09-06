@@ -16,7 +16,6 @@ body {
 
 var websock = new WebSocket("ws://localhost:1976/");
 var ignore_websock = false;
-var selected_netif = "";
 
 websock.onopen = function() {
 	var freq = document.getElementById("spin");
@@ -38,6 +37,8 @@ websock.onmessage = function(m) {
 	var msg = JSON.parse(m.data);
 	var dropdown = "<select id = \"netif\" onmouseenter = \"ign_ws()\" onmouseleave =\"unign_ws()\">";
 	var i;
+	var select;
+	var selected_if = false;
 
 	if (ignore_websock)
 		return;
@@ -50,11 +51,12 @@ websock.onmessage = function(m) {
 
 	for (i = 0; i < msg.ifnames.length; i++) {
 		var netif = msg.ifnames[i];
-		var select = "";
 
-		if (netif == selected_netif ||
-		    (!selected_netif && netif == msg.ifname))
+		select = "";
+		if (netif == msg.ifname) {
+			selected_if = true;
 			select = "selected";
+		}
 
 		dropdown += "<option value =\"" + netif +
 			"\" onclick = \"select_netif()\" " + select + ">" +
@@ -63,23 +65,29 @@ websock.onmessage = function(m) {
 	dropdown += "</select>";
 
 	document.getElementById("netif_dd").innerHTML = dropdown;
+
+	/*
+	 * If the interface went away, fall back to the first interface
+	 * in the list.
+	 */
+	if (!selected_if)
+		websock.send(msg.ifnames[0]);
 };
 
 function select_netif() {
 	var e = document.getElementById("netif");
 
-	selected_netif = e.options[e.selectedIndex].value;
-	websock.send(selected_netif);
+	websock.send(e.options[e.selectedIndex].value);
 	ignore_websock = false;
-}
+};
 
 function ign_ws() {
 	ignore_websock = true;
-}
+};
 
 function unign_ws() {
 	ignore_websock = false;
-}
+};
 
 function send_msg(freq) {
 	websock.send(freq);
