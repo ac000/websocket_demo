@@ -5,6 +5,11 @@ LDFLAGS=-Wl,-z,now -pie
 LIBS=`pkg-config --libs glib-2.0`
 INCS=`pkg-config --cflags glib-2.0`
 
+ifeq ($(shell pkg-config --exists libseccomp && echo 1), 1)
+LIBS += -lseccomp
+CFLAGS += -D_HAVE_LIBSECCOMP
+endif
+
 websocket_demo: websocket_demo.c websocket.h
 	$(CC) $(CFLAGS) $(CFLAGS_E) $(LDFLAGS) -o $@ ${@}.c ${INCS} ${LIBS}
 

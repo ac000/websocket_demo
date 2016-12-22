@@ -18,4 +18,8 @@ The WebSocket protocol is defined here: http://tools.ietf.org/html/rfc6455
 It also demonstrates the use of epoll(7) to handle multiple connections
 in a single process.
 
+It will also make use of libseccomp (if installed) to constrain what system
+calls can be used once up and running. This really just serves as a
+demonstration.
+
 Licensed under the GNU General Public License version 2

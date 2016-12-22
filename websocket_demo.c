@@ -30,6 +30,9 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#ifdef _HAVE_LIBSECCOMP
+#include <seccomp.h>
+#endif
 
 #include <glib.h>
 
@@ -69,6 +72,57 @@ static const char *_listen_ips[] = {
 	"::1",
 	(const char *)NULL
 };
+
+static void init_seccomp(void)
+{
+#ifdef _HAVE_LIBSECCOMP
+	int err;
+	scmp_filter_ctx ctx;
+
+	ctx = seccomp_init(SCMP_ACT_ERRNO(EACCES));
+	if (ctx == NULL)
+		goto no_seccomp;
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(epoll_wait), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(epoll_ctl), 0);
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(read), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0);
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(open), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(close), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(fstat), 0);
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_create), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_settime), 0);
+
+	/* Needed for getifaddrs(3) */
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 1,
+			SCMP_CMP(0, SCMP_CMP_EQ, AF_NETLINK));
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(bind), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sendto), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(recvmsg), 0);
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(accept4), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getpeername), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getsockname), 0);
+
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sigreturn), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit), 0);
+
+	err = seccomp_load(ctx);
+	if (!err) {
+		printf("Initialised seccomp\n");
+		return;
+	}
+
+no_seccomp:
+	seccomp_release(ctx);
+	printf("Seccomp initialisation failed. Check kernel config?\n");
+#else
+	printf("Not built with libseccomp support. Not using seccomp\n");
+#endif
+}
 
 static void set_def_net_if(void)
 {
@@ -496,6 +550,8 @@ int main(int argc, char *argv[])
 	memset(hostname, 0, sizeof(hostname));
 	gethostname(hostname, HOST_NAME_MAX);
 	set_def_net_if();
+
+	init_seccomp();
 
 	for ( ; ; ) {
 		int n;
