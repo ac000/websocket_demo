@@ -499,7 +499,7 @@ static int do_bind(const char *listen_ip)
 
 	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &optval, optlen);
 	if (res->ai_family == AF_INET6)
-		setsockopt(lfd, SOL_IPV6, IPV6_V6ONLY, &optval, optlen);
+		setsockopt(lfd, IPPROTO_IPV6, IPV6_V6ONLY, &optval, optlen);
 
 	err = bind(lfd, res->ai_addr, res->ai_addrlen);
 	if (err)
