@@ -113,6 +113,7 @@ static void init_seccomp(void)
 	err = seccomp_load(ctx);
 	if (!err) {
 		printf("Initialised seccomp\n");
+		seccomp_release(ctx);
 		return;
 	}
 
