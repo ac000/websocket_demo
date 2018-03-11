@@ -372,8 +372,7 @@ static ssize_t read_client_data(struct client_state *client)
 			break;
 		printf("Client data -:\n\n%s\n", client->msg);
 		if (client->msg[0] < '0' || client->msg[0] > '9')
-			snprintf(client->net_if, sizeof(client->net_if), "%s",
-					client->msg);
+			memcpy(client->net_if, client->msg, 32);
 		else
 			set_client_timer(client);
 	} while (processed < bytes_read);
