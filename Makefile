@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -g -std=c99 -pedantic -O2 -Wp,-D_FORTIFY_SOURCE=2 -D_FILE_OFFSET_BITS=64 -fexceptions -fstack-protector --param=ssp-buffer-size=4 -fPIE
+CFLAGS=-Wall -Wextra -g -std=c99 -O2 -Wp,-D_FORTIFY_SOURCE=2 -D_FILE_OFFSET_BITS=64 -fexceptions -fstack-protector --param=ssp-buffer-size=4 -fPIE
 CFLAGS_E=-Wno-unused-result # Yeah OK...
 LDFLAGS=-Wl,-z,now -pie
 LIBS=`pkg-config --libs glib-2.0`
