@@ -314,7 +314,7 @@ static void get_header(char *dest, const char *header, const char *data)
 static ssize_t decode_frame(char *dest, const char *src)
 {
 	size_t moffset;
-	size_t processed;
+	ssize_t processed;
 	uint64_t i;
 	uint64_t plen;
 	unsigned char key[MKEY_LEN];
@@ -355,10 +355,10 @@ static ssize_t decode_frame(char *dest, const char *src)
 	return processed;
 }
 
-static size_t read_client_data(struct client_state *client)
+static ssize_t read_client_data(struct client_state *client)
 {
 	ssize_t bytes_read;
-	size_t processed = 0;
+	ssize_t processed = 0;
 	char buf[BUF_SIZE + 1];
 
 	bytes_read = read(client->fd, &buf, BUF_SIZE);
