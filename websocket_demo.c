@@ -515,7 +515,7 @@ static int do_bind(const char *listen_ip)
 	return lfd;
 }
 
-int main(int argc, char *argv[])
+int main(void)
 {
 	int elfd = epoll_create1(0);
 	int timeout = -1;
