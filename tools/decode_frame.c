@@ -1,11 +1,13 @@
 /*
  * decode_frame.c - Decode a WebSocket frame header
  *
- * Copyright (C) 2014   Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014, 2018   Andrew Clayton <andrew@digital-domain.net>
  *
  * Licensed under the GNU General Public License Version 2
  * See COPYING
  */
+
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <endian.h>
 
 #include "../websocket.h"
 
@@ -50,7 +53,7 @@ static size_t decode_frame_header(const char *src)
 		plen = ntohs(*(uint16_t *)(src + SHORT_HDR_LEN));
 	} else {
 		moffset = sizeof(uint64_t) + SHORT_HDR_LEN;
-		plen = *(uint64_t *)(src + SHORT_HDR_LEN);
+		plen = be64toh(*(uint64_t *)(src + SHORT_HDR_LEN));
 	}
 
 	if (wh->masked) {

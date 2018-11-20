@@ -30,6 +30,7 @@
 #include <net/if.h>
 #include <string.h>
 #include <ctype.h>
+#include <endian.h>
 #include <errno.h>
 #ifdef _HAVE_LIBSECCOMP
 #include <seccomp.h>
@@ -224,7 +225,7 @@ static ssize_t do_response(struct client_state *client)
 		ext_hdr_len = sizeof(uint16_t);
 	} else {
 		wh.pay_len = PAYLEN_LEN64;
-		plen = len;
+		plen = htobe64(len);
 		ext_hdr_len = sizeof(uint64_t);
 	}
 
@@ -344,7 +345,7 @@ static ssize_t decode_frame(char *dest, const char *src)
 		plen = ntohs(*(uint16_t *)(src + SHORT_HDR_LEN));
 	} else {
 		moffset = sizeof(uint64_t) + SHORT_HDR_LEN;
-		plen = *(uint64_t *)(src + SHORT_HDR_LEN);
+		plen = be64toh(*(uint64_t *)(src + SHORT_HDR_LEN));
 	}
 	printf("* len        : %lu\n", plen);
 

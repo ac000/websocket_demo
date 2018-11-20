@@ -1,7 +1,7 @@
 /*
  * encode_frame.c - Create a WebSocket frame header
  *
- * Copyright (C) 2014	Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014, 2018	Andrew Clayton <andrew@digital-domain.net>
  *
  * Licensed under the GNU General Public License Version 2
  * See COPYING
@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <endian.h>
 
 #include "../websocket.h"
 
@@ -64,7 +65,7 @@ static void encode_frame_header(struct websocket_frame *wf)
 		ext_hdr_len = sizeof(uint16_t);
 	} else {
 		wf->wh.pay_len = PAYLEN_LEN64;
-		plen = wf->len;
+		plen = htonl(wf->len);
 		ext_hdr_len = sizeof(uint64_t);
 	}
 
