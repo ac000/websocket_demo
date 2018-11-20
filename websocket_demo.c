@@ -3,7 +3,8 @@
  *
  * WebSockets are defined here: http://tools.ietf.org/html/rfc6455
  *
- * Copyright (C) 2014 - 2016	Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014 - 2016, 2018	Andrew Clayton
+ *					<andrew@digital-domain.net>
  *
  * Licensed under the GNU General Public License Version 2
  * See COPYING
@@ -53,8 +54,10 @@ struct client_state {
 	int fd;			/* accept fd */
 	int tfd;		/* timer fd */
 	char msg[BUF_SIZE + 1];	/* Data from client */
+	char rbuf[BUF_SIZE + 1];	/* raw client buffer */
 	char net_if[32];	/* Network interface to show stats for */
 	char peerip[INET6_ADDRSTRLEN];	/* Clients IP address */
+	ssize_t bytes_read;
 };
 
 static int ecfd;
@@ -358,25 +361,41 @@ static ssize_t decode_frame(char *dest, const char *src)
 
 static ssize_t read_client_data(struct client_state *client)
 {
-	ssize_t bytes_read;
-	ssize_t processed = 0;
-	char buf[BUF_SIZE + 1];
+	ssize_t ret;
+	ssize_t processed;
 
-	bytes_read = read(client->fd, &buf, BUF_SIZE);
-	if (bytes_read == -1)
-		return -1;
-	printf("Received data from client (%ld bytes)\n", bytes_read);
 	do {
-		memset(client->msg, 0, sizeof(client->msg));
-		processed += decode_frame(client->msg, buf + processed);
-		if (processed == -1)
-			break;
-		printf("Client data -:\n\n%s\n", client->msg);
-		if (client->msg[0] < '0' || client->msg[0] > '9')
-			memcpy(client->net_if, client->msg, 32);
-		else
-			set_client_timer(client);
-	} while (processed < bytes_read);
+		ret = read(client->fd, &client->rbuf + client->bytes_read,
+			   BUF_SIZE - client->bytes_read);
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+			else if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+			else
+				return -1;
+		}
+
+		client->bytes_read += ret;
+	} while (ret > 0);
+
+	printf("Received data from client (%ld bytes)\n", client->bytes_read);
+
+	if (client->bytes_read < SHORT_HDR_LEN)
+		return -2;
+
+	client->bytes_read = 0;
+	memset(client->msg, 0, sizeof(client->msg));
+
+	processed = decode_frame(client->msg, client->rbuf);
+	if (processed == -1)
+		return -1;
+
+	printf("Client data -:\n\n%s\n", client->msg);
+	if (client->msg[0] < '0' || client->msg[0] > '9')
+		memcpy(client->net_if, client->msg, 32);
+	else
+		set_client_timer(client);
 
 	return processed;
 }
@@ -416,6 +435,7 @@ static void new_client(int fd)
 
 	client->fd = fd;
 	client->tfd = -1;
+	client->bytes_read = 0;
 	strcpy(client->net_if, def_net_if);
 	getpeername(fd, (struct sockaddr *)&ss, &sslen);
 	getnameinfo((struct sockaddr *)&ss, sslen, client->peerip,
@@ -430,8 +450,9 @@ static void handle_socket(struct client_state *client)
 	printf("Got request on %d\n", client->fd);
 
 	err = read_client_data(client);
-	if (err == -1) {
-		close_conn(client);
+	if (err < 0) {
+		if (err == -1)
+			close_conn(client);
 		return;
 	}
 
