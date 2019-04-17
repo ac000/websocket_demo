@@ -3,7 +3,7 @@
  *
  * WebSockets are defined here: http://tools.ietf.org/html/rfc6455
  *
- * Copyright (C) 2014	Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014, 2019	Andrew Clayton <andrew@digital-domain.net>
  *
  * Licensed under the GNU General Public License Version 2
  * See COPYING
