@@ -38,6 +38,8 @@
 
 #include <glib.h>
 
+#include "short_types.h"
+
 #include "websocket.h"
 
 #define SERVER_PORT		"1976"
@@ -149,8 +151,8 @@ static void set_def_net_if(void)
 	freeifaddrs(ifaddr);
 }
 
-static void get_stats(const char *net_if, unsigned long *uptime, uint64_t *rx,
-		      uint64_t *tx)
+static void get_stats(const char *net_if, unsigned long *uptime, u64 *rx,
+		      u64 *tx)
 {
 	char path[PATH_MAX];
 	FILE *fp;
@@ -189,10 +191,10 @@ static ssize_t do_response(struct client_state *client)
 	char buf[BUF_SIZE];
 	char tbuf[BUF_SIZE];
 	unsigned long uptime;
-	uint64_t len;
-	uint64_t plen;
-	uint64_t rx_bytes;
-	uint64_t tx_bytes;
+	u64 len;
+	u64 plen;
+	u64 rx_bytes;
+	u64 tx_bytes;
 	int ext_hdr_len = 0;
 	ssize_t bytes_wrote;
 	struct ifaddrs *ifaddr;
@@ -200,8 +202,8 @@ static ssize_t do_response(struct client_state *client)
 
 	get_stats(client->net_if, &uptime, &rx_bytes, &tx_bytes);
 	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, client->peerip,
-			uptime, client->net_if, (uint64_t)rx_bytes,
-			(uint64_t)tx_bytes);
+			uptime, client->net_if, (u64)rx_bytes,
+			(u64)tx_bytes);
 	getifaddrs(&ifaddr);
 	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
 		if (ifa->ifa_addr == NULL)
@@ -221,12 +223,12 @@ static ssize_t do_response(struct client_state *client)
 		wh.pay_len = len;
 	} else if (len <= UINT16_MAX) {
 		wh.pay_len = PAYLEN_LEN16;
-		plen = htons((uint16_t)len);
-		ext_hdr_len = sizeof(uint16_t);
+		plen = htons((u16)len);
+		ext_hdr_len = sizeof(u16);
 	} else {
 		wh.pay_len = PAYLEN_LEN64;
 		plen = htobe64(len);
-		ext_hdr_len = sizeof(uint64_t);
+		ext_hdr_len = sizeof(u64);
 	}
 
 	memcpy(buf, &wh, SHORT_HDR_LEN);
@@ -320,8 +322,8 @@ static ssize_t decode_frame(char *dest, const char *src)
 {
 	size_t moffset;
 	ssize_t processed;
-	uint64_t i;
-	uint64_t plen;
+	u64 i;
+	u64 plen;
 	unsigned char key[MKEY_LEN];
 	struct websocket_header *wh;
 
@@ -341,11 +343,11 @@ static ssize_t decode_frame(char *dest, const char *src)
 		moffset = SHORT_HDR_LEN;
 		plen = wh->pay_len;
 	} else if (wh->pay_len == PAYLEN_LEN16) {
-		moffset = sizeof(uint16_t) + SHORT_HDR_LEN;
-		plen = ntohs(*(uint16_t *)(src + SHORT_HDR_LEN));
+		moffset = sizeof(u16) + SHORT_HDR_LEN;
+		plen = ntohs(*(u16 *)(src + SHORT_HDR_LEN));
 	} else {
-		moffset = sizeof(uint64_t) + SHORT_HDR_LEN;
-		plen = be64toh(*(uint64_t *)(src + SHORT_HDR_LEN));
+		moffset = sizeof(u64) + SHORT_HDR_LEN;
+		plen = be64toh(*(u64 *)(src + SHORT_HDR_LEN));
 	}
 	printf("* len        : %lu\n", plen);
 
@@ -464,7 +466,7 @@ static void handle_socket(struct client_state *client)
 
 static void handle_timer(struct client_state *client)
 {
-	uint64_t tbuf;
+	u64 tbuf;
 	int err;
 
 	read(client->tfd, &tbuf, sizeof(tbuf));

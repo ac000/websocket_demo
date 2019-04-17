@@ -14,6 +14,8 @@
 
 #include <stdint.h>
 
+#include "short_types.h"
+
 #define SHORT_HDR_LEN		2
 #define MAX_HDR_LEN		14
 #define MKEY_LEN		4
@@ -36,13 +38,13 @@
  */
 
 struct websocket_header {
-        uint16_t opcode:4;
-        uint16_t rsv3:1;
-        uint16_t rsv2:1;
-        uint16_t rsv1:1;
-        uint16_t fin:1;
-        uint16_t pay_len:7;
-        uint16_t masked:1;
+        u16 opcode:4;
+        u16 rsv3:1;
+        u16 rsv2:1;
+        u16 rsv1:1;
+        u16 fin:1;
+        u16 pay_len:7;
+        u16 masked:1;
 };
 
 static const char *websocket_opcodes[] = {
