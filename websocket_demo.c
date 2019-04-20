@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <limits.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
@@ -36,16 +37,20 @@
 #include <seccomp.h>
 #endif
 
-#include <glib.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #include "short_types.h"
 
 #include "websocket.h"
 
-#define SERVER_PORT		"1976"
+#define WS_PORT			"1975"
+#define WSS_PORT		"1976"
 
 #define MAX_EVENTS		10
 #define BUF_SIZE		4096
+
+#define WS_KEY_LEN		36
 
 #define err_exit(func)	\
 	do { \
@@ -53,31 +58,56 @@
 		exit(EXIT_FAILURE); \
 	} while (0)
 
-struct client_state {
-	int fd;			/* accept fd */
-	int tfd;		/* timer fd */
-	char msg[BUF_SIZE + 1];	/* Data from client */
-	char rbuf[BUF_SIZE + 1];	/* raw client buffer */
-	char net_if[32];	/* Network interface to show stats for */
-	char peerip[INET6_ADDRSTRLEN];	/* Clients IP address */
-	ssize_t bytes_read;
+enum conn_type {
+	WS_LISTEN = 0,
+	WSS_LISTEN,
+	WS_CONN,
+	WSS_CONN,
+	WS_TIMER
 };
 
-static int ecfd;
-static struct epoll_event ev;
-static struct epoll_event events[MAX_EVENTS];
+struct ep_data {
+	int fd;
+	enum conn_type type;
 
-static GHashTable *timer_to_socket;	/* timer fd to socket fd lookup */
-static GHashTable *clients;		/* client_states's key'd on sock fd */
+	union {
+		struct {
+			char msg[BUF_SIZE + 1];  /* Data from client */
+			char rbuf[BUF_SIZE + 1]; /* raw client buffer */
+			char net_if[32];
+			char peerip[INET6_ADDRSTRLEN];
+			bool tls_conn;
+			bool connected_ws;
+			SSL *tls;
+
+			struct ep_data *timer;
+		} conn;
+
+		struct timer {
+			struct ep_data *conn;
+		} timer;
+	} fdt;
+};
+
+static const struct listen_on {
+	const char *ip;
+	const char *port;
+} listen_on[] = {
+	{ "127.0.0.1", WS_PORT },
+	{ "127.0.0.1", WSS_PORT },
+	{ "::1", WS_PORT },
+	{ "::1", WSS_PORT }
+};
+
+static SSL_CTX *tls_ctx;
+static const char *TLS_CERT = "wsd.pem";
+static const char *TLS_KEY = "wsd.key";
+
+static int epollfd;
+static struct epoll_event events[MAX_EVENTS];
 
 static char hostname[HOST_NAME_MAX + 1];
 static char def_net_if[32] = "lo";
-
-static const char *_listen_ips[] = {
-	"127.0.0.1",
-	"::1",
-	(const char *)NULL
-};
 
 static void init_seccomp(void)
 {
@@ -94,6 +124,8 @@ static void init_seccomp(void)
 
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(read), 0);
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(recvfrom), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sendto), 0);
 
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(open), 0);
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(openat), 0);
@@ -103,15 +135,16 @@ static void init_seccomp(void)
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_create), 0);
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_settime), 0);
 
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex), 0);
+	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(brk), 0);
+
 	/* Needed for getifaddrs(3) */
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 1,
-			SCMP_CMP(0, SCMP_CMP_EQ, AF_NETLINK));
+			 SCMP_CMP(0, SCMP_CMP_EQ, AF_NETLINK));
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(bind), 0);
-	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sendto), 0);
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(recvmsg), 0);
 
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(accept4), 0);
-	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getpeername), 0);
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getsockname), 0);
 
 	seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sigreturn), 0);
@@ -130,6 +163,111 @@ no_seccomp:
 #else
 	printf("Not built with libseccomp support. Not using seccomp\n");
 #endif
+}
+
+static int init_tls(void)
+{
+	int err;
+
+	SSL_library_init();
+	SSL_load_error_strings();
+
+	/* Create SSL ctx */
+	tls_ctx = SSL_CTX_new(TLS_server_method());
+	if (!tls_ctx) {
+		ERR_print_errors_fp(stderr);
+		return -1;
+	}
+
+	/* Configure SSL ctx */
+	SSL_CTX_set_ecdh_auto(tls_ctx, 1);
+	/* Set the key and cert */
+	err = SSL_CTX_use_certificate_file(tls_ctx, TLS_CERT, SSL_FILETYPE_PEM);
+	if (err <= 0) {
+		ERR_print_errors_fp(stderr);
+		SSL_CTX_free(tls_ctx);
+		return -1;
+	}
+
+	err = SSL_CTX_use_PrivateKey_file(tls_ctx, TLS_KEY, SSL_FILETYPE_PEM);
+	if (err <= 0) {
+		ERR_print_errors_fp(stderr);
+		SSL_CTX_free(tls_ctx);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * This is just a demo. No need to get too fancy here, Just catch when
+ * we *need* to read/write again.
+ */
+static ssize_t net_read(struct ep_data *conn, void *buf, size_t count)
+{
+	ssize_t ret;
+	ssize_t bytes_read = 0;
+
+	if (conn->type == WSS_CONN) {
+		for (;;) {
+			ret = SSL_read(conn->fdt.conn.tls, buf + bytes_read,
+				       count - bytes_read);
+			if (ret > 0)
+				bytes_read += ret;
+			else
+				return bytes_read;
+		}
+	}
+
+	do {
+		ret = recv(conn->fd, buf + bytes_read, count - bytes_read, 0);
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+			else if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+			else
+				return -1;
+		}
+		bytes_read += ret;
+	} while (ret > 0);
+
+	return bytes_read;
+}
+
+static ssize_t net_write(struct ep_data *conn, void *buf, size_t count)
+{
+	ssize_t ret;
+	ssize_t bytes_wrote = 0;
+
+	if (conn->type == WSS_CONN) {
+		for (;;) {
+			ret = SSL_write(conn->fdt.conn.tls, buf + bytes_wrote,
+					count - bytes_wrote);
+			if (ret > 0)
+				bytes_wrote += ret;
+			else
+				return bytes_wrote;
+		}
+	}
+
+	do {
+		ret = send(conn->fd, buf + bytes_wrote, count - bytes_wrote,
+			   0);
+		if (ret == 0)
+			return bytes_wrote;
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+			else if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+			else
+				return -1;
+		}
+		bytes_wrote += ret;
+	} while (ret > 0);
+
+	return bytes_wrote;
 }
 
 static void set_def_net_if(void)
@@ -162,7 +300,7 @@ static void get_stats(const char *net_if, unsigned long *uptime, u64 *rx,
 	fclose(fp);
 
 	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/rx_bytes",
-			net_if);
+		 net_if);
 	fp = fopen(path, "r");
 	if (fp) {
 		fscanf(fp, "%lu", rx);
@@ -170,7 +308,7 @@ static void get_stats(const char *net_if, unsigned long *uptime, u64 *rx,
 	}
 
 	snprintf(path, PATH_MAX, "/sys/class/net/%s/statistics/tx_bytes",
-			net_if);
+		 net_if);
 	fp = fopen(path, "r");
 	if (fp) {
 		fscanf(fp, "%lu", tx);
@@ -181,10 +319,10 @@ static void get_stats(const char *net_if, unsigned long *uptime, u64 *rx,
 /*
  * Builds some JSON with some system information and sends that to the client
  */
-static ssize_t do_response(struct client_state *client)
+static ssize_t do_response(struct ep_data *conn)
 {
-	struct websocket_header wh = {  .opcode = 0x01, .rsv3 = 0, .rsv2 = 0,
-					.rsv1 = 0, .fin = 1, .masked = 0 };
+	struct websocket_header wh = { .opcode = 0x01, .rsv3 = 0, .rsv2 = 0,
+				       .rsv1 = 0, .fin = 1, .masked = 0 };
 	const char *json_fmt = "{ \"host\": \"%s\", \"peerip\": \"%s\", "
 		"\"uptime\": %lu, \"ifname\": \"%s\", \"rx\": %lu, "
 		"\"tx\": %lu, \"ifnames\": [ ";
@@ -196,14 +334,13 @@ static ssize_t do_response(struct client_state *client)
 	u64 rx_bytes;
 	u64 tx_bytes;
 	int ext_hdr_len = 0;
-	ssize_t bytes_wrote;
 	struct ifaddrs *ifaddr;
 	struct ifaddrs *ifa;
 
-	get_stats(client->net_if, &uptime, &rx_bytes, &tx_bytes);
-	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname, client->peerip,
-			uptime, client->net_if, (u64)rx_bytes,
-			(u64)tx_bytes);
+	get_stats(conn->fdt.conn.net_if, &uptime, &rx_bytes, &tx_bytes);
+	len = snprintf(tbuf, sizeof(tbuf), json_fmt, hostname,
+		       conn->fdt.conn.peerip, uptime, conn->fdt.conn.net_if,
+		       (u64)rx_bytes, (u64)tx_bytes);
 	getifaddrs(&ifaddr);
 	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
 		if (ifa->ifa_addr == NULL)
@@ -235,37 +372,38 @@ static ssize_t do_response(struct client_state *client)
 	if (len > PAYLEN_LEN)
 		memcpy(buf + SHORT_HDR_LEN, &plen, ext_hdr_len);
 	memcpy(buf + SHORT_HDR_LEN + ext_hdr_len, tbuf, len);
-	bytes_wrote = write(client->fd, buf, SHORT_HDR_LEN + ext_hdr_len + len);
 
-	return bytes_wrote;
+	return net_write(conn, buf, SHORT_HDR_LEN + ext_hdr_len + len);
 }
 
 /*
  * Creates and/or adjusts the clients update timer
  */
-static void set_client_timer(struct client_state *client)
+static void set_client_timer(struct ep_data *conn)
 {
 	struct itimerspec its;
 
-	its.it_value.tv_sec = atoi(client->msg);
+	its.it_value.tv_sec = atoi(conn->fdt.conn.msg);
 	its.it_value.tv_nsec = 0;
 	its.it_interval.tv_sec = its.it_value.tv_sec;
 	its.it_interval.tv_nsec = its.it_value.tv_nsec;
 
-	if (client->tfd == -1) {
-		int fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
-		ev.events = EPOLLIN | EPOLLET;
-		ev.data.fd = fd;
-		epoll_ctl(ecfd, EPOLL_CTL_ADD, fd, &ev);
+	if (!conn->fdt.conn.timer) {
+		struct epoll_event ev;
+		struct ep_data *timer = malloc(sizeof(struct ep_data));
 
-		client->tfd = fd;
-		g_hash_table_insert(timer_to_socket, GINT_TO_POINTER(fd),
-				GINT_TO_POINTER(client->fd));
+		timer->fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+		timer->type = WS_TIMER;
+		timer->fdt.timer.conn = conn;
+		conn->fdt.conn.timer = timer;
+		ev.events = EPOLLIN | EPOLLET;
+		ev.data.ptr = (void *)timer;
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, timer->fd, &ev);
 	}
 
-	timerfd_settime(client->tfd, 0, &its, NULL);
+	timerfd_settime(conn->fdt.conn.timer->fd, 0, &its, NULL);
 	printf("Setting client update frequency to %ld seconds\n",
-			its.it_value.tv_sec);
+	       its.it_value.tv_sec);
 }
 
 /*
@@ -276,31 +414,39 @@ static void set_client_timer(struct client_state *client)
  *        the above.
  *     3) Base64 encode the SHA1
  */
-static void do_handshake(const char *key, int fd)
+static void do_handshake(const char *key, struct ep_data *conn)
 {
+	SHA_CTX sha1;
+	BIO *bmem;
+	BIO *b64;
+	BUF_MEM *b64p;
+	u8 hash[SHA_DIGEST_LENGTH];
 	char buf[BUF_SIZE];
-	char *base64;
-	gsize len = g_checksum_type_get_length(G_CHECKSUM_SHA1);
-	guint8 *buffer = g_new(guint8, len);
-	GChecksum *csum;
+	int len;
 
-	len = snprintf(buf, sizeof(buf), "%s%s", key, WS_KEY);
-	csum = g_checksum_new(G_CHECKSUM_SHA1);
-	g_checksum_update(csum, (unsigned char *)buf, -1);
-	g_checksum_get_digest(csum, buffer, &len);
-	base64 = g_base64_encode(buffer, len);
-//	printf("base64 : %s\n", base64);
+	SHA1_Init(&sha1);
+	SHA1_Update(&sha1, key, strlen(key));
+	SHA1_Update(&sha1, WS_KEY, WS_KEY_LEN);
+	SHA1_Final(hash, &sha1);
+
+	bmem = BIO_new(BIO_s_mem());
+	b64 = BIO_new(BIO_f_base64());
+	b64 = BIO_push(b64, bmem);
+
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	BIO_write(b64, hash, SHA_DIGEST_LENGTH);
+	BIO_flush(b64);
+	BIO_get_mem_ptr(b64, &b64p);
+	b64p->data[b64p->length] = '\0';
 
 	len = snprintf(buf, sizeof(buf),
-			"HTTP/1.1 101 Switching Protocols\r\n"
-			"Upgrade: websocket\r\n"
-			"Connection: Upgrade\r\n"
-			"Sec-WebSocket-Accept: %s\r\n\r\n", base64);
-	write(fd, buf, len);
+		       "HTTP/1.1 101 Switching Protocols\r\n"
+		       "Upgrade: websocket\r\n"
+		       "Connection: Upgrade\r\n"
+		       "Sec-WebSocket-Accept: %s\r\n\r\n", b64p->data);
+	net_write(conn, buf, len);
 
-	g_free(base64);
-	g_free(buffer);
-	g_checksum_free(csum);
+	BIO_free_all(b64);
 }
 
 /*
@@ -328,12 +474,15 @@ static ssize_t decode_frame(char *dest, const char *src)
 	struct websocket_header *wh;
 
 	wh = (struct websocket_header *)src;
-	printf("* FIN        : %d\n", wh->fin);
-	printf("* RSV1       : %d\n", wh->rsv1);
-	printf("* RSV2       : %d\n", wh->rsv2);
-	printf("* RSV3       : %d\n", wh->rsv3);
-	printf("* opcode     : 0x%02x (%s)\n", wh->opcode,
-			websocket_opcodes[wh->opcode]);
+	printf("  FIN        : %d\n", wh->fin);
+	printf("  RSV1       : %d\n", wh->rsv1);
+	printf("  RSV2       : %d\n", wh->rsv2);
+	printf("  RSV3       : %d\n", wh->rsv3);
+	printf("  opcode     : 0x%02x (%s)\n", wh->opcode,
+	       websocket_opcodes[wh->opcode]);
+	printf("  Masked     : %hu\n", wh->masked);
+	printf("  pay_len    : %hu\n", wh->pay_len);
+
 
 	/* Did we get a connection close request? */
 	if (wh->opcode == 0x08)
@@ -349,7 +498,7 @@ static ssize_t decode_frame(char *dest, const char *src)
 		moffset = sizeof(u64) + SHORT_HDR_LEN;
 		plen = be64toh(*(u64 *)(src + SHORT_HDR_LEN));
 	}
-	printf("* len        : %lu\n", plen);
+	printf("  len        : %lu\n", plen);
 
 	/* Decode the payload data */
 	memcpy(key, src + moffset, MKEY_LEN);
@@ -357,150 +506,141 @@ static ssize_t decode_frame(char *dest, const char *src)
 		dest[i] = src[i + moffset + MKEY_LEN] ^ key[i % MKEY_LEN];
 
 	processed = moffset + MKEY_LEN + plen;
-	printf("* processed  : %zu\n", processed);
+	printf("  processed  : %zu\n", processed);
 
 	return processed;
 }
 
-static ssize_t read_client_data(struct client_state *client)
+static ssize_t read_client_data(struct ep_data *conn)
 {
-	ssize_t ret;
 	ssize_t processed;
+	ssize_t bytes_read;
 
-	do {
-		ret = read(client->fd, &client->rbuf + client->bytes_read,
-			   BUF_SIZE - client->bytes_read);
-		if (ret == -1) {
-			if (errno == EINTR)
-				continue;
-			else if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
-			else
-				return -1;
-		}
+	bytes_read = net_read(conn, conn->fdt.conn.rbuf, BUF_SIZE);
+	printf("Received data from client (%ld bytes)\n", bytes_read);
 
-		client->bytes_read += ret;
-	} while (ret > 0);
-
-	printf("Received data from client (%ld bytes)\n", client->bytes_read);
-
-	if (client->bytes_read < SHORT_HDR_LEN)
+	if (bytes_read < SHORT_HDR_LEN)
 		return -2;
 
-	client->bytes_read = 0;
-	memset(client->msg, 0, sizeof(client->msg));
-
-	processed = decode_frame(client->msg, client->rbuf);
+	memset(conn->fdt.conn.msg, 0, sizeof(conn->fdt.conn.msg));
+	processed = decode_frame(conn->fdt.conn.msg, conn->fdt.conn.rbuf);
 	if (processed == -1)
 		return -1;
 
-	printf("Client data -:\n\n%s\n", client->msg);
-	if (client->msg[0] < '0' || client->msg[0] > '9')
-		memcpy(client->net_if, client->msg, 32);
+	printf("Client data -:\n\n%s\n", conn->fdt.conn.msg);
+	if (conn->fdt.conn.msg[0] < '0' || conn->fdt.conn.msg[0] > '9')
+		memcpy(conn->fdt.conn.net_if, conn->fdt.conn.msg, 32);
 	else
-		set_client_timer(client);
+		set_client_timer(conn);
 
 	return processed;
 }
 
-static void close_conn(struct client_state *client)
+static void close_conn(struct ep_data *conn)
 {
-	printf("Closing connection on %d\n", client->fd);
+	printf("Closing connection on %d\n", conn->fd);
 
-	close(client->fd);
-	close(client->tfd);
-	g_hash_table_remove(timer_to_socket, GINT_TO_POINTER(client->tfd));
-	g_hash_table_remove(clients, GINT_TO_POINTER(client->fd));
+	close(conn->fd);
+	if (conn->fdt.conn.timer)
+		close(conn->fdt.conn.timer->fd);
+
+	free(conn->fdt.conn.timer);
+	free(conn);
 }
 
-static void new_client(int fd)
-{
-	ssize_t bytes_read;
-	char buf[BUF_SIZE + 1];
-	char key[64];
-	struct client_state *client;
-	struct sockaddr_storage ss;
-	socklen_t sslen = sizeof(ss);
-
-	printf("New client\n");
-	bytes_read = read(fd, &buf, BUF_SIZE);
-	if (bytes_read == -1)
-		return;
-	buf[bytes_read] = '\0';
-	printf("Received from client (%ld bytes) ->\n%s\n", bytes_read, buf);
-
-	get_header(key, "Sec-WebSocket-Key:", buf);
-//	printf("key    : %s\n", key);
-
-	do_handshake(key, fd);
-
-	client = malloc(sizeof(struct client_state));
-
-	client->fd = fd;
-	client->tfd = -1;
-	client->bytes_read = 0;
-	strcpy(client->net_if, def_net_if);
-	getpeername(fd, (struct sockaddr *)&ss, &sslen);
-	getnameinfo((struct sockaddr *)&ss, sslen, client->peerip,
-			INET6_ADDRSTRLEN, NULL, 0, NI_NUMERICHOST);
-	g_hash_table_insert(clients, GINT_TO_POINTER(fd), client);
-}
-
-static void handle_socket(struct client_state *client)
+static void handle_conn(struct ep_data *conn)
 {
 	int err;
 
-	printf("Got request on %d\n", client->fd);
+	printf("Got request on %d\n", conn->fd);
 
-	err = read_client_data(client);
+	err = read_client_data(conn);
 	if (err < 0) {
 		if (err == -1)
-			close_conn(client);
+			close_conn(conn);
 		return;
 	}
 
-	err = do_response(client);
+	err = do_response(conn);
 	if (err == -1)
-		 close_conn(client);
+		 close_conn(conn);
 }
 
-static void handle_timer(struct client_state *client)
+static void new_conn(struct ep_data *conn)
+{
+	char buf[BUF_SIZE + 1];
+	char key[64];
+	ssize_t bytes_read;
+
+	fprintf(stderr, "new_conn() on fd [%d]\n", conn->fd);
+
+	bytes_read = net_read(conn, &buf, BUF_SIZE);
+	buf[bytes_read] = '\0';
+	printf("Received from client (%ld bytes) ->\n%s\n", bytes_read, buf);
+	if (bytes_read < 1)
+		return;
+
+	get_header(key, "Sec-WebSocket-Key:", buf);
+	do_handshake(key, conn);
+	conn->fdt.conn.connected_ws = true;
+}
+
+static void handle_timer(struct ep_data *timer)
 {
 	u64 tbuf;
 	int err;
 
-	read(client->tfd, &tbuf, sizeof(tbuf));
-	err = do_response(client);
+	read(timer->fd, &tbuf, sizeof(tbuf));
+	err = do_response(timer->fdt.timer.conn);
 	if (err == -1)
-		close_conn(client);
+		close_conn(timer);
 }
 
-/*
- * Handle one of three different fd's.
- *    1a) An accept(2)'ed file descriptor for a new connection
- *    1b) An already connected socket
- *     2) A timer file descriptor
- */
-static void handle_fd(int fd)
+static void do_accept_tls(struct ep_data *conn)
 {
-	gpointer sfd;
-	struct client_state *client;
+	int err;
+	SSL **tls = &conn->fdt.conn.tls;
 
-	sfd = g_hash_table_lookup(timer_to_socket, GINT_TO_POINTER(fd));
-	if (sfd) {
-		/* Timer fd */
-		client = g_hash_table_lookup(clients, sfd);
-		handle_timer(client);
-	} else {
-		client = g_hash_table_lookup(clients, GINT_TO_POINTER(fd));
-		if (client)
-			handle_socket(client);
-		else
-			new_client(fd);
+	if (!*tls) {
+		*tls = SSL_new(tls_ctx);
+		SSL_set_fd(*tls, conn->fd);
+	}
+
+	err = SSL_accept(*tls);
+	if (err == 1)
+		conn->fdt.conn.tls_conn = true;
+}
+
+static void do_accept(const struct ep_data *listen_conn)
+{
+	for (;;) {
+		struct epoll_event ev;
+		struct ep_data *conn;
+		struct sockaddr_storage ss;
+		socklen_t addrlen = sizeof(ss);
+		int fd;
+
+		fd = accept4(listen_conn->fd, (struct sockaddr *)&ss, &addrlen,
+			     SOCK_NONBLOCK);
+		if (fd == -1)
+			return;
+
+		conn = calloc(1, sizeof(struct ep_data));
+		strcpy(conn->fdt.conn.net_if, def_net_if);
+		conn->type = listen_conn->type == WSS_LISTEN ?
+			     WSS_CONN : WS_CONN;
+		conn->fd = fd;
+		getnameinfo((struct sockaddr *)&ss, addrlen,
+			    conn->fdt.conn.peerip, INET6_ADDRSTRLEN, NULL,
+			    0, NI_NUMERICHOST);
+
+		ev.events = EPOLLIN | EPOLLET;
+		ev.data.ptr = (void *)conn;
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev);
 	}
 }
 
-static int do_bind(const char *listen_ip)
+static int do_bind(const char *ip, const char *port)
 {
 	int lfd;
 	int optval = 1;
@@ -514,11 +654,12 @@ static int do_bind(const char *listen_ip)
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | AI_PASSIVE;
 
-	err = getaddrinfo(listen_ip, SERVER_PORT, &hints, &res);
+	err = getaddrinfo(ip, port, &hints, &res);
 	if (err)
 		err_exit("getaddrinfo");
 
-	lfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	lfd = socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK,
+		     res->ai_protocol);
 	if (lfd == -1)
 		err_exit("socket");
 
@@ -539,34 +680,38 @@ static int do_bind(const char *listen_ip)
 	return lfd;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-	int elfd = epoll_create1(0);
-	int timeout = -1;
-	const char **listen_ips = _listen_ips;
+	int n = 0;
+	int nfds;
+	bool use_tls = false;
 
-	for ( ; *listen_ips != NULL; listen_ips++) {
-		const char *ip = *listen_ips;
-		int lfd = do_bind(ip);
+	if (argc == 2 && strcmp(argv[1], "tls") == 0)
+		use_tls = true;
+
+	epollfd = epoll_create1(0);
+
+	for (; n < (int)(sizeof(listen_on) / sizeof(struct listen_on)); n++) {
+		struct epoll_event ev;
+		struct ep_data *conn = calloc(1, sizeof(struct ep_data));
+		bool tls_port = strcmp(listen_on[n].port, WSS_PORT) == 0 ?
+				true : false;
+
+		if (tls_port && !use_tls)
+			continue;
+
+		conn->type = tls_port ? WSS_LISTEN : WS_LISTEN;
+		conn->fd = do_bind(listen_on[n].ip, listen_on[n].port);
 
 		printf("Listening on : %s%s%s:%s\n",
-				(strchr(ip, ':')) ? "[" : "",
-				ip,
-				(strchr(ip, ':')) ? "]" : "",
-				SERVER_PORT);
+		       (strchr(listen_on[n].ip, ':')) ? "[" : "",
+		       listen_on[n].ip,
+		       (strchr(listen_on[n].ip, ':')) ? "]" : "",
+		       listen_on[n].port);
 		ev.events = EPOLLIN;
-		ev.data.fd = lfd;
-		epoll_ctl(elfd, EPOLL_CTL_ADD, lfd, &ev);
+		ev.data.ptr = (void *)conn;
+		epoll_ctl(epollfd, EPOLL_CTL_ADD, conn->fd, &ev);
 	}
-
-	/* Add the epoll client connection fd to the listen epoll set */
-	ecfd = epoll_create1(0);
-	ev.events = EPOLLIN;
-	ev.data.fd = ecfd;
-	epoll_ctl(elfd, EPOLL_CTL_ADD, ecfd, &ev);
-
-	clients = g_hash_table_new_full(NULL, NULL, NULL, free);
-	timer_to_socket = g_hash_table_new(NULL, NULL);
 
 	/* Don't terminate on -EPIPE */
 	signal(SIGPIPE, SIG_IGN);
@@ -576,27 +721,30 @@ int main(void)
 	gethostname(hostname, HOST_NAME_MAX);
 	set_def_net_if();
 
+	if (use_tls)
+		init_tls();
 	init_seccomp();
 
-	for ( ; ; ) {
-		int n;
-		int nfds;
+epoll_loop:
+	nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+	for (n = 0; n < nfds; n++) {
+		struct epoll_event *ev = &events[n];
+		struct ep_data *ed = ev->data.ptr;
 
-		nfds = epoll_wait(elfd, events, MAX_EVENTS, timeout);
-		for (n = 0; n < nfds; n++) {
-			if (events[n].data.fd != ecfd) {
-				int cfd = accept4(events[n].data.fd, NULL,
-						NULL, O_NONBLOCK);
-
-				ev.events = EPOLLIN | EPOLLET;
-				ev.data.fd = cfd;
-				epoll_ctl(ecfd, EPOLL_CTL_ADD, cfd, &ev);
-			} else {
-				nfds = epoll_wait(ecfd, events, MAX_EVENTS,
-						timeout);
-				for (n = 0; n < nfds; n++)
-					handle_fd(events[n].data.fd);
-			}
+		if (ed->type == WS_LISTEN || ed->type == WSS_LISTEN) {
+			do_accept(ed);
+		} else if (ev->events & (EPOLLERR | EPOLLHUP)) {
+			close_conn(ed);
+		} else {
+			if (ed->type == WSS_CONN && !ed->fdt.conn.tls_conn)
+				do_accept_tls(ed);
+			else if (ed->type == WS_TIMER)
+				handle_timer(ed);
+			else if (!ed->fdt.conn.connected_ws)
+				new_conn(ed);
+			else
+				handle_conn(ed);
 		}
 	}
+	goto epoll_loop;
 }

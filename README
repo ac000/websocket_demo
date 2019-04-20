@@ -22,4 +22,13 @@ It will also make use of libseccomp (if installed) to constrain what system
 calls can be used once up and running. This really just serves as a
 demonstration.
 
+It also implements WebSockets over TLS (wss://), this can be enabled by
+passing 'tls' to the websocket_demo command. And by using
+wss://localhost:1976/ as the websocket connection string in
+websocket_demo.html
+
+You will also need a TLS certificate and key (can be self made, required
+some faffing about in Firefox to get it to work) and specify them in the
+the TLS_CERT & TLS_KEY variables in websocket_demo.c
+
 Licensed under the GNU General Public License version 2
