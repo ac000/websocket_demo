@@ -173,7 +173,9 @@ static int init_tls(void)
 {
 	int err;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	SSL_library_init();
+#endif
 	SSL_load_error_strings();
 
 	/* Create SSL ctx */
