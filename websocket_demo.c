@@ -44,6 +44,10 @@
 
 #include "websocket.h"
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_server_method       SSLv23_server_method
+#endif
+
 #define WS_PORT			"1975"
 #define WSS_PORT		"1976"
 
