@@ -699,13 +699,14 @@ int main(int argc, char *argv[])
 
 	for (; n < (int)(sizeof(listen_on) / sizeof(struct listen_on)); n++) {
 		struct epoll_event ev;
-		struct ep_data *conn = calloc(1, sizeof(struct ep_data));
+		struct ep_data *conn;
 		bool tls_port = strcmp(listen_on[n].port, WSS_PORT) == 0 ?
 				true : false;
 
 		if (tls_port && !use_tls)
 			continue;
 
+		conn = calloc(1, sizeof(struct ep_data));
 		conn->type = tls_port ? WSS_LISTEN : WS_LISTEN;
 		conn->fd = do_bind(listen_on[n].ip, listen_on[n].port);
 
