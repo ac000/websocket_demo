@@ -31,4 +31,4 @@ You will also need a TLS certificate and key (can be self made, required
 some faffing about in Firefox to get it to work) and specify them in the
 the TLS_CERT & TLS_KEY variables in websocket_demo.c
 
-Licensed under the GNU General Public License version 2
+Licensed under the MIT license, see MIT-LICENSE.txt

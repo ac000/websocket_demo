@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+
 /*
  * websocket_demo.c
  *
@@ -5,9 +7,6 @@
  *
  * Copyright (C) 2014 - 2016, 2018 - 2019	Andrew Clayton
  *						<andrew@digital-domain.net>
- *
- * Licensed under the GNU General Public License Version 2
- * See COPYING
  */
 
 #define _GNU_SOURCE

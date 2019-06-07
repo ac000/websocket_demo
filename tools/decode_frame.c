@@ -1,10 +1,9 @@
+/* SPDX-License-Identifier: MIT */
+
 /*
  * decode_frame.c - Decode a WebSocket frame header
  *
  * Copyright (C) 2014, 2018   Andrew Clayton <andrew@digital-domain.net>
- *
- * Licensed under the GNU General Public License Version 2
- * See COPYING
  */
 
 #define _GNU_SOURCE
