@@ -208,7 +208,7 @@ static int init_tls(void)
  * This is just a demo. No need to get too fancy here, Just catch when
  * we *need* to read/write again.
  */
-static ssize_t net_read(struct ep_data *conn, void *buf, size_t count)
+static ssize_t net_read(struct ep_data *conn, char *buf, size_t count)
 {
 	ssize_t ret;
 	ssize_t bytes_read = 0;
@@ -240,7 +240,7 @@ static ssize_t net_read(struct ep_data *conn, void *buf, size_t count)
 	return bytes_read;
 }
 
-static ssize_t net_write(struct ep_data *conn, void *buf, size_t count)
+static ssize_t net_write(struct ep_data *conn, char *buf, size_t count)
 {
 	ssize_t ret;
 	ssize_t bytes_wrote = 0;
@@ -579,7 +579,7 @@ static void new_conn(struct ep_data *conn)
 
 	fprintf(stderr, "new_conn() on fd [%d]\n", conn->fd);
 
-	bytes_read = net_read(conn, &buf, BUF_SIZE);
+	bytes_read = net_read(conn, buf, BUF_SIZE);
 	buf[bytes_read] = '\0';
 	printf("Received from client (%ld bytes) ->\n%s\n", bytes_read, buf);
 	if (bytes_read < 1)
