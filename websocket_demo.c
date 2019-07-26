@@ -511,7 +511,7 @@ static ssize_t decode_frame(char *dest, const char *src)
 		dest[i] = src[i + moffset + MKEY_LEN] ^ key[i % MKEY_LEN];
 
 	processed = moffset + MKEY_LEN + plen;
-	printf("  processed  : %zu\n", processed);
+	printf("  processed  : %zd\n", processed);
 
 	return processed;
 }
