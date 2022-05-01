@@ -5,7 +5,8 @@
  *
  * WebSockets are defined here: http://tools.ietf.org/html/rfc6455
  *
- * Copyright (C) 2014, 2019	Andrew Clayton <andrew@digital-domain.net>
+ * Copyright (C) 2014, 2019, 2022		Andrew Clayton
+ *						<andrew@digital-domain.net>
  */
 
 #ifndef _WEBSOCKET_H_
@@ -37,13 +38,25 @@
  */
 
 struct websocket_header {
-        u16 opcode:4;
-        u16 rsv3:1;
-        u16 rsv2:1;
-        u16 rsv1:1;
-        u16 fin:1;
-        u16 pay_len:7;
-        u16 masked:1;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	u16 fin:1;
+	u16 rsv1:1;
+	u16 rsv2:1;
+	u16 rsv3:1;
+	u16 opcode:4;
+	u16 masked:1;
+	u16 pay_len:7;
+#elif __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	u16 opcode:4;
+	u16 rsv3:1;
+	u16 rsv2:1;
+	u16 rsv1:1;
+	u16 fin:1;
+	u16 pay_len:7;
+	u16 masked:1;
+#else
+#error __BYTE_ORDER__ not supported
+#endif
 };
 
 static const char *websocket_opcodes[] = {
